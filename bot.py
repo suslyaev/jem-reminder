@@ -486,8 +486,11 @@ async def remind_upcoming_events(message: Message):
     events = event_manager.get_upcoming_events(group_id, 30)
 
     if not events:
-        await message.answer("На ближайший месяц нет мероприятий.")
+        await message.answer(f"В группе '{group[2]}' на ближайший месяц нет мероприятий.")
         return
+    
+    # Получаем chat_id целевой группы для отправки напоминаний
+    target_chat_id = group[1]  # group[1] = chat_id группы в Telegram
     
     for event_id, name, time, responsible, _ in events:
         builder = InlineKeyboardBuilder()
@@ -499,10 +502,16 @@ async def remind_upcoming_events(message: Message):
         markup = builder.as_markup()
         msg_text = f"Мероприятие: {name}\nДата и время: {datetime.strptime(time, '%Y-%m-%d %H:%M:%S').strftime('%d.%m.%Y %H:%M')}\nГруппа: {group[2]}"  # group[2] = название группы
 
-        if message.chat.type in ['group', 'supergroup']:
-            await message.answer(msg_text, reply_markup=markup)
-        else:
-            await message.answer(msg_text, reply_markup=markup)
+        # Отправляем напоминание в целевую группу
+        try:
+            await bot.send_message(target_chat_id, msg_text, reply_markup=markup)
+        except Exception as e:
+            print(f"Не удалось отправить напоминание в группу {target_chat_id}: {e}")
+            # Если не удалось отправить в целевую группу, отправляем в текущий чат
+            await message.answer(f"Не удалось отправить в группу {group[2]}: {msg_text}", reply_markup=markup)
+    
+    # Отправляем финальное подтверждение
+    await message.answer(f"✅ Отправлено {len(events)} напоминаний в группу '{group[2]}'")
 
 # Список всех мероприятий
 @dp.message(Command("list_events"))

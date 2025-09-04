@@ -51,8 +51,9 @@ class EventManager:
         conn = self._get_connection()
         cursor = conn.cursor()
         try:
+            from datetime import timedelta
             now = datetime.now()
-            future_date = now.replace(hour=23, minute=59, second=59, microsecond=999999)
+            future_date = now + timedelta(days=days)
             
             cursor.execute("""
                 SELECT id, name, time, responsible, group_id 
