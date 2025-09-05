@@ -570,22 +570,17 @@ async def handle_booking(callback_query: types.CallbackQuery):
         await callback_query.answer("Это мероприятие уже забронировано.")
         return
     
-    # Проверяем права на группу
+    # Бронируем мероприятие (убрали ограничения - могут все)
     user_id = callback_query.from_user.id
-    if not (is_superadmin(user_id) or is_group_admin(user_id, event[4])):
-        await callback_query.answer("У вас нет прав для бронирования мероприятий в этой группе.")
-        return
-    
-    # Бронируем мероприятие
-    user = (
+    user_name = (
         callback_query.from_user.username or
         f"{callback_query.from_user.first_name} {callback_query.from_user.last_name}".strip() or
         f"id_{callback_query.from_user.id}"
     )
     
-    if event_manager.update_event_responsible(event_id, user):
+    if event_manager.update_event_responsible(event_id, user_name, user_id):
         builder = InlineKeyboardBuilder()
-        builder.button(text=user, callback_data=f"unbook_{event_id}")
+        builder.button(text=user_name, callback_data=f"unbook_{event_id}")
         markup = builder.as_markup()
         
         await bot.edit_message_reply_markup(
@@ -607,13 +602,21 @@ async def handle_unbooking(callback_query: types.CallbackQuery):
         await callback_query.answer("Мероприятие не найдено.")
         return
     
-    # Проверяем права на группу
     user_id = callback_query.from_user.id
-    if not (is_superadmin(user_id) or is_group_admin(user_id, event[4])):
-        await callback_query.answer("У вас нет прав для отмены бронирования в этой группе.")
+    responsible_user_id = event[5]  # responsible_user_id
+    
+    # Проверяем права: может отменить тот, кто забронировал, или админы/суперадмины
+    can_unbook = (
+        responsible_user_id == user_id or  # тот, кто забронировал
+        is_superadmin(user_id) or  # суперадмин
+        is_group_admin(user_id, event[4])  # админ группы
+    )
+    
+    if not can_unbook:
+        await callback_query.answer("Вы можете отменить только свои бронирования.")
         return
     
-    if event_manager.update_event_responsible(event_id, None):
+    if event_manager.update_event_responsible(event_id, None, None):
         builder = InlineKeyboardBuilder()
         builder.button(text="Забронировать", callback_data=f"book_{event_id}")
         markup = builder.as_markup()

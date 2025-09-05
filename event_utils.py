@@ -9,44 +9,44 @@ class EventManager:
     def _get_connection(self):
         return sqlite3.connect(self.db_path)
     
-    def create_event(self, name: str, time: datetime, group_id: int, responsible: Optional[str] = None) -> int:
+    def create_event(self, name: str, time: datetime, group_id: int, responsible: Optional[str] = None, responsible_user_id: Optional[int] = None) -> int:
         """Создает новое мероприятие"""
         conn = self._get_connection()
         cursor = conn.cursor()
         try:
             cursor.execute(
-                "INSERT INTO events (name, time, responsible, group_id) VALUES (?, ?, ?, ?)",
-                (name, time.strftime('%Y-%m-%d %H:%M:%S'), responsible, group_id)
+                "INSERT INTO events (name, time, responsible, group_id, responsible_user_id) VALUES (?, ?, ?, ?, ?)",
+                (name, time.strftime('%Y-%m-%d %H:%M:%S'), responsible, group_id, responsible_user_id)
             )
             conn.commit()
             return cursor.lastrowid
         finally:
             conn.close()
     
-    def get_event(self, event_id: int) -> Optional[Tuple[int, str, str, str, int]]:
+    def get_event(self, event_id: int) -> Optional[Tuple[int, str, str, str, int, int]]:
         """Получает мероприятие по ID"""
         conn = self._get_connection()
         cursor = conn.cursor()
         try:
-            cursor.execute("SELECT id, name, time, responsible, group_id FROM events WHERE id = ?", (event_id,))
+            cursor.execute("SELECT id, name, time, responsible, group_id, responsible_user_id FROM events WHERE id = ?", (event_id,))
             return cursor.fetchone()
         finally:
             conn.close()
     
-    def get_events_by_group(self, group_id: int) -> List[Tuple[int, str, str, str, int]]:
+    def get_events_by_group(self, group_id: int) -> List[Tuple[int, str, str, str, int, int]]:
         """Получает все мероприятия группы"""
         conn = self._get_connection()
         cursor = conn.cursor()
         try:
             cursor.execute(
-                "SELECT id, name, time, responsible, group_id FROM events WHERE group_id = ? ORDER BY time ASC",
+                "SELECT id, name, time, responsible, group_id, responsible_user_id FROM events WHERE group_id = ? ORDER BY time ASC",
                 (group_id,)
             )
             return cursor.fetchall()
         finally:
             conn.close()
     
-    def get_upcoming_events(self, group_id: int, days: int = 30) -> List[Tuple[int, str, str, str, int]]:
+    def get_upcoming_events(self, group_id: int, days: int = 30) -> List[Tuple[int, str, str, str, int, int]]:
         """Получает предстоящие мероприятия группы на указанное количество дней"""
         conn = self._get_connection()
         cursor = conn.cursor()
@@ -56,7 +56,7 @@ class EventManager:
             future_date = now + timedelta(days=days)
             
             cursor.execute("""
-                SELECT id, name, time, responsible, group_id 
+                SELECT id, name, time, responsible, group_id, responsible_user_id 
                 FROM events 
                 WHERE group_id = ? AND time BETWEEN ? AND ? 
                 ORDER BY time ASC
@@ -65,14 +65,14 @@ class EventManager:
         finally:
             conn.close()
     
-    def update_event_responsible(self, event_id: int, responsible: Optional[str]) -> bool:
+    def update_event_responsible(self, event_id: int, responsible: Optional[str], responsible_user_id: Optional[int] = None) -> bool:
         """Обновляет ответственного за мероприятие"""
         conn = self._get_connection()
         cursor = conn.cursor()
         try:
             cursor.execute(
-                "UPDATE events SET responsible = ? WHERE id = ?",
-                (responsible, event_id)
+                "UPDATE events SET responsible = ?, responsible_user_id = ? WHERE id = ?",
+                (responsible, responsible_user_id, event_id)
             )
             conn.commit()
             return cursor.rowcount > 0
@@ -90,23 +90,23 @@ class EventManager:
         finally:
             conn.close()
     
-    def get_all_events(self) -> List[Tuple[int, str, str, str, int]]:
+    def get_all_events(self) -> List[Tuple[int, str, str, str, int, int]]:
         """Получает все мероприятия"""
         conn = self._get_connection()
         cursor = conn.cursor()
         try:
-            cursor.execute("SELECT id, name, time, responsible, group_id FROM events ORDER BY time ASC")
+            cursor.execute("SELECT id, name, time, responsible, group_id, responsible_user_id FROM events ORDER BY time ASC")
             return cursor.fetchall()
         finally:
             conn.close()
     
-    def get_events_by_time_range(self, start_time: datetime, end_time: datetime) -> List[Tuple[int, str, str, str, int]]:
+    def get_events_by_time_range(self, start_time: datetime, end_time: datetime) -> List[Tuple[int, str, str, str, int, int]]:
         """Получает мероприятия в указанном временном диапазоне"""
         conn = self._get_connection()
         cursor = conn.cursor()
         try:
             cursor.execute("""
-                SELECT id, name, time, responsible, group_id 
+                SELECT id, name, time, responsible, group_id, responsible_user_id 
                 FROM events 
                 WHERE time BETWEEN ? AND ? 
                 ORDER BY time ASC
