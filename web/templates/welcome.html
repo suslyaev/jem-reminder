@@ -4,12 +4,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>JEM Reminder</title>
     <link rel="stylesheet" href="/static/style.css">
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
   </head>
   <body>
     <div class="container">
       <h1>JEM Reminder</h1>
       <div class="user-info">
-        <p><strong>ID пользователя:</strong> {{ user_info.telegram_id if user_info else 'Не определен' }}</p>
+        <p><strong>ID пользователя:</strong> <span id="uid">{{ user_info.telegram_id if user_info else 'Не определен' }}</span></p>
         {% if user_info and user_info.username %}
         <p><strong>Никнейм:</strong> @{{ user_info.username }}</p>
         {% endif %}
@@ -23,17 +24,40 @@
         <ol>
           <li>Добавьте бота <strong>@jem_reminder_bot</strong> в вашу группу</li>
           <li>Дайте боту права администратора</li>
-          <li>Используйте команды бота для создания событий и напоминаний</li>
-          <li>Вернитесь на эту страницу для управления группами и настройками</li>
+          <li>Создавайте события и напоминания через бота и этот интерфейс</li>
         </ol>
       </div>
       
-      {% if message %}
       <div class="message">
-        <p>{{ message }}</p>
+        <p>Для локального тестирования установите переменную <code>TEST_TELEGRAM_ID</code> в файле <code>.env</code> на сервере.</p>
       </div>
-      {% endif %}
     </div>
+
+    <script>
+      (function() {
+        try {
+          if (window.Telegram && Telegram.WebApp) {
+            Telegram.WebApp.ready();
+            const data = Telegram.WebApp.initDataUnsafe || {};
+            const user = data.user || null;
+            if (user && user.id) {
+              // Показать ID на странице
+              var el = document.getElementById('uid');
+              if (el) el.textContent = String(user.id);
+              // Если в URL нет tg_id – добавить и перезагрузить
+              var params = new URLSearchParams(window.location.search);
+              if (!params.get('tg_id')) {
+                params.set('tg_id', String(user.id));
+                var url = window.location.pathname + '?' + params.toString();
+                window.location.replace(url);
+              }
+            }
+          }
+        } catch (e) {
+          console.log('TG WebApp init error:', e);
+        }
+      })();
+    </script>
   </body>
 </html>
 
