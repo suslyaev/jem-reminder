@@ -248,7 +248,27 @@
     </div>
 
     <script>
+      // Add tg_id to all forms automatically
+      function addTgIdToForms() {
+        const tgId = new URLSearchParams(window.location.search).get('tg_id');
+        if (tgId) {
+          const forms = document.querySelectorAll('form');
+          forms.forEach(form => {
+            // Check if form already has tg_id input
+            if (!form.querySelector('input[name="tg_id"]')) {
+              const input = document.createElement('input');
+              input.type = 'hidden';
+              input.name = 'tg_id';
+              input.value = tgId;
+              form.appendChild(input);
+            }
+          });
+        }
+      }
+      
       (function(){
+        addTgIdToForms();
+        
         const url = new URL(window.location.href);
         const ok = url.searchParams.get('ok');
         if (ok) {
