@@ -5,12 +5,74 @@
     <title>JEM Reminder - Группы</title>
     <link rel="stylesheet" href="/static/style.css">
     <style>
-      .group-card { position: relative; padding: 12px 44px 12px 12px; border-radius: 12px; background: var(--card); margin-bottom: 12px; }
+      .group-card { 
+        position: relative; 
+        display: flex; 
+        align-items: flex-start; 
+        padding: 12px 44px 12px 12px; 
+        border-radius: 12px; 
+        background: var(--card); 
+        margin-bottom: 12px; 
+      }
       .group-title { font-weight: 700; font-size: 16px; }
       .gear { position:absolute; top: 10px; right: 10px; text-decoration:none; }
       .meta-line { color: var(--muted); font-size: 14px; margin-top: 4px; }
       .greet { margin-bottom: 12px; }
       .greet .meta-line { margin-top: 2px; }
+      .group-icon { 
+        width: 40px; 
+        height: 40px; 
+        border-radius: 50%; 
+        display: flex; 
+        align-items: center; 
+        justify-content: center; 
+        font-weight: bold; 
+        font-size: 18px; 
+        color: white; 
+        margin-right: 12px; 
+        flex-shrink: 0;
+      }
+      .group-content { 
+        flex: 1; 
+        min-width: 0; 
+      }
+      .search-container {
+        position: relative;
+        display: flex;
+        align-items: flex-start;
+        padding: 12px 44px 12px 12px;
+        border-radius: 12px;
+        background: var(--card);
+        margin-bottom: 12px;
+      }
+      .search-box {
+        width: 100%;
+        padding: 0;
+        border: none;
+        border-radius: 0;
+        background: transparent;
+        color: var(--text);
+        font-size: 16px;
+        outline: none;
+      }
+      .search-clear {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        background: none;
+        border: none;
+        color: var(--muted);
+        cursor: pointer;
+        font-size: 16px;
+        padding: 4px;
+        display: none;
+      }
+      .search-clear:hover {
+        color: var(--text);
+      }
+      .search-clear.show {
+        display: block;
+      }
     </style>
   </head>
   <body>
@@ -26,21 +88,74 @@
         <div class="empty">Нет доступных групп</div>
       {% else %}
         <div>
-          {% for gid, title, role, cnt, role_label, chat_id in groups %}
-            <div class="group-card">
-              <div class="group-title"><a class="link" href="/group/{{ gid }}?tg_id={{ request.query_params.get('tg_id') }}" style="text-decoration:none;">{{ title }} (#{{ gid }})</a></div>
-              <div class="meta-line">{{ chat_id }}</div>
-              <div class="meta-line">Роль: {{ role_label }}</div>
-              <div class="meta-line">Мероприятий: {{ cnt }}</div>
-              {% if role in ['owner','admin','superadmin'] %}
-                <a class="gear" href="/group/{{ gid }}/settings?tg_id={{ request.query_params.get('tg_id') }}" aria-label="Настройки">⚙️</a>
-              {% endif %}
-            </div>
-          {% endfor %}
+          <div class="search-container">
+            <input type="text" id="groupSearch" class="search-box" placeholder="🔍 Поиск групп..." />
+            <button type="button" id="groupSearchClear" class="search-clear">✕</button>
+          </div>
+          <div id="groupsList">
+            {% for gid, title, role, cnt, role_label, chat_id in groups %}
+              <div class="group-card" data-title="{{ title.lower() }}" data-role="{{ role_label.lower() }}" data-chat="{{ chat_id }}">
+                <div class="group-icon" style="background-color: {{ ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16'][gid % 8] }};">
+                  {{ title[0].upper() if title else '?' }}
+                </div>
+                <div class="group-content">
+                  <div class="group-title"><a class="link" href="/group/{{ gid }}?tg_id={{ request.query_params.get('tg_id') }}" style="text-decoration:none;">{{ title }} (#{{ gid }})</a></div>
+                  <div class="meta-line">{{ chat_id }}</div>
+                  <div class="meta-line">Роль: {{ role_label }}</div>
+                  <div class="meta-line">Мероприятий: {{ cnt }}</div>
+                </div>
+                {% if role in ['owner','admin','superadmin'] %}
+                  <a class="gear" href="/group/{{ gid }}/settings?tg_id={{ request.query_params.get('tg_id') }}" aria-label="Настройки">⚙️</a>
+                {% endif %}
+              </div>
+            {% endfor %}
+          </div>
         </div>
       {% endif %}
     </div>
+
+    <script>
+      document.addEventListener('DOMContentLoaded', function() {
+        const searchInput = document.getElementById('groupSearch');
+        const searchClear = document.getElementById('groupSearchClear');
+        const groupsList = document.getElementById('groupsList');
+        
+        if (searchInput && groupsList) {
+          function updateSearch() {
+            const query = searchInput.value.toLowerCase().trim();
+            const groups = groupsList.querySelectorAll('.group-card');
+            
+            groups.forEach(group => {
+              const title = group.getAttribute('data-title') || '';
+              const role = group.getAttribute('data-role') || '';
+              const chat = group.getAttribute('data-chat') || '';
+              
+              const matches = title.includes(query) || 
+                            role.includes(query) || 
+                            chat.includes(query);
+              
+              group.style.display = matches ? 'flex' : 'none';
+            });
+            
+            // Show/hide clear button
+            if (searchClear) {
+              searchClear.classList.toggle('show', query.length > 0);
+            }
+          }
+          
+          searchInput.addEventListener('input', updateSearch);
+          
+          if (searchClear) {
+            searchClear.addEventListener('click', function() {
+              searchInput.value = '';
+              updateSearch();
+              searchInput.focus();
+            });
+          }
+        }
+      });
+    </script>
   </body>
-  </html>
+</html>
 
 
