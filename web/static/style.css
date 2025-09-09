@@ -16,3 +16,12 @@ h1,h2,h3 { margin: 12px 0; }
 input, select, textarea { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border); margin-top: 6px; background: transparent; color: inherit; font-size: 16px; }
 form { display: block; }
 
+/* Welcome page styles */
+.user-info { background: var(--card); padding: 16px; border-radius: 12px; margin: 16px 0; }
+.user-info p { margin: 8px 0; }
+.instructions { background: var(--card); padding: 16px; border-radius: 12px; margin: 16px 0; }
+.instructions h2 { margin-top: 0; }
+.instructions ol { margin: 12px 0; padding-left: 20px; }
+.instructions li { margin: 8px 0; }
+.message { background: var(--card); padding: 16px; border-radius: 12px; margin: 16px 0; color: var(--muted); }
+

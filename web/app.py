@@ -26,7 +26,7 @@ env = Environment(
     autoescape=select_autoescape(['html', 'xml'])
 )
 
-app = FastAPI(title="Zvuk Admin Mobile")
+app = FastAPI(title="JEM Reminder")
 app.mount('/static', StaticFiles(directory=STATIC_DIR.as_posix()), name='static')
 
 
@@ -169,10 +169,17 @@ async def index(request: Request, tg_id: int | None = None):
     
     if tg_id is None:
         # Temporary helper for manual testing
-        return render('welcome.html', message="Append ?tg_id=YOUR_TELEGRAM_ID to URL or set TEST_TELEGRAM_ID in test_config.py", request=request)
+        return render('welcome.html', message="Append ?tg_id=YOUR_TELEGRAM_ID to URL or set TEST_TELEGRAM_ID in test_config.py", user_info=None, request=request)
     urow = UserRepo.get_by_telegram_id(tg_id)
     if not urow:
-        return render('welcome.html', message="User not found. Start the bot first.", request=request)
+        # Create user_info object for display
+        user_info = {
+            'telegram_id': tg_id,
+            'username': None,
+            'first_name': None,
+            'last_name': None
+        }
+        return render('welcome.html', message="User not found. Start the bot first.", user_info=user_info, request=request)
     user_id = urow[0]
     # urow: (id, telegram_id, username, phone, first_name, last_name)
     username = urow[2]

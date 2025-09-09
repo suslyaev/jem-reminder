@@ -2,15 +2,39 @@
 <html>
   <head>
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Zvuk Admin</title>
+    <title>JEM Reminder</title>
     <link rel="stylesheet" href="/static/style.css">
   </head>
   <body>
     <div class="container">
-      <h1>Zvuk</h1>
-      <p>{{ message }}</p>
+      <h1>JEM Reminder</h1>
+      <div class="user-info">
+        <p><strong>ID пользователя:</strong> {{ user_info.telegram_id if user_info else 'Не определен' }}</p>
+        {% if user_info and user_info.username %}
+        <p><strong>Никнейм:</strong> @{{ user_info.username }}</p>
+        {% endif %}
+        {% if user_info and (user_info.first_name or user_info.last_name) %}
+        <p><strong>Имя:</strong> {{ user_info.first_name or '' }} {{ user_info.last_name or '' }}</p>
+        {% endif %}
+      </div>
+      
+      <div class="instructions">
+        <h2>Как пользоваться:</h2>
+        <ol>
+          <li>Добавьте бота <strong>@jem_reminder_bot</strong> в вашу группу</li>
+          <li>Дайте боту права администратора</li>
+          <li>Используйте команды бота для создания событий и напоминаний</li>
+          <li>Вернитесь на эту страницу для управления группами и настройками</li>
+        </ol>
+      </div>
+      
+      {% if message %}
+      <div class="message">
+        <p>{{ message }}</p>
+      </div>
+      {% endif %}
     </div>
   </body>
-  </html>
+</html>
 
 
