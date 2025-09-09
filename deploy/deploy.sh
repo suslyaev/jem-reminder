@@ -6,9 +6,9 @@
 set -e
 
 # Настройки берём из deploy/.env (если есть) или из переменных окружения
-if [ -f "./deploy/.env" ]; then
+if [ -f "./.env" ]; then
   set -a
-  . ./deploy/.env
+  . ./.env
   set +a
 fi
 
