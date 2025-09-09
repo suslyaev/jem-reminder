@@ -60,6 +60,7 @@ CREATE INDEX IF NOT EXISTS idx_pending_group ON pending_admins(group_id);
 
 -- Notification settings per group
 -- time_unit: 'months'|'weeks'|'days'|'hours'|'minutes'
+-- type: 'group'|'personal' - тип шаблона уведомлений
 CREATE TABLE IF NOT EXISTS notification_settings (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     group_id      INTEGER NOT NULL,
@@ -67,6 +68,7 @@ CREATE TABLE IF NOT EXISTS notification_settings (
     time_unit     TEXT NOT NULL,
     message_text  TEXT,
     is_default    INTEGER NOT NULL DEFAULT 0,
+    type          TEXT NOT NULL DEFAULT 'group',
     created_at    TEXT DEFAULT (datetime('now')),
     FOREIGN KEY(group_id) REFERENCES groups(id) ON DELETE CASCADE
 );
@@ -165,4 +167,5 @@ CREATE TABLE IF NOT EXISTS user_display_names (
     FOREIGN KEY(group_id) REFERENCES groups(id) ON DELETE CASCADE,
     FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
 );
+
 

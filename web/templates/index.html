@@ -99,13 +99,13 @@
                   {{ title[0].upper() if title else '?' }}
                 </div>
                 <div class="group-content">
-                  <div class="group-title"><a class="link" href="/group/{{ gid }}?tg_id={{ request.query_params.get('tg_id') }}" style="text-decoration:none;">{{ title }} (#{{ gid }})</a></div>
+                  <div class="group-title"><a class="link" href="/group/{{ gid }}{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="text-decoration:none;">{{ title }} (#{{ gid }})</a></div>
                   <div class="meta-line">{{ chat_id }}</div>
                   <div class="meta-line">Роль: {{ role_label }}</div>
                   <div class="meta-line">Мероприятий: {{ cnt }}</div>
                 </div>
                 {% if role in ['owner','admin','superadmin'] %}
-                  <a class="gear" href="/group/{{ gid }}/settings?tg_id={{ request.query_params.get('tg_id') }}" aria-label="Настройки">⚙️</a>
+                  <a class="gear" href="/group/{{ gid }}/settings{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Настройки">⚙️</a>
                 {% endif %}
               </div>
             {% endfor %}
@@ -151,6 +151,20 @@
               updateSearch();
               searchInput.focus();
             });
+          }
+        }
+
+        // Handle success messages
+        const url = new URL(window.location.href);
+        const ok = url.searchParams.get('ok');
+        if (ok) {
+          const map = { 
+            group_deleted: 'Группа успешно удалена' 
+          };
+          if (map[ok]) {
+            alert(map[ok]);
+            url.searchParams.delete('ok');
+            window.history.replaceState({}, '', url.toString());
           }
         }
       });

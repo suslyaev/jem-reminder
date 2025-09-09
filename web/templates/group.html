@@ -81,13 +81,13 @@
   <body>
     <div class="container">
       <div id="toast" class="toast"></div>
-      <a class="link" href="/?tg_id={{ request.query_params.get('tg_id') }}">← Назад</a>
+      <a class="link" href="/{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">← Назад</a>
       <div class="group-header">
         <h2>{{ group[2] if group else '' }}</h2>
         {% if is_admin %}
           <div style="display: flex; gap: 8px; align-items: center;">
             <button class="message-btn" onclick="openGroupMessageModal()" style="background: #3b82f6; color: white; border: none; border-radius: 4px; padding: 4px 8px; cursor: pointer; font-size: 12px;">✉️</button>
-            <a class="group-gear" href="/group/{{ group[0] }}/settings?tg_id={{ request.query_params.get('tg_id') }}" aria-label="Настройки">⚙️</a>
+            <a class="group-gear" href="/group/{{ group[0] }}/settings{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Настройки">⚙️</a>
           </div>
         {% endif %}
       </div>
@@ -109,15 +109,15 @@
             {% for e in events %}
               <div class="event-card" data-name="{{ e.name.lower() }}" data-date="{{ e.time_display.lower() }}" data-responsible="{{ e.responsible_name.lower() if e.responsible_name else '' }}">
                 <div class="event-head">
-                  <div class="event-title"><a class="link" href="/group/{{ group[0] }}/events/{{ e.id }}?tg_id={{ request.query_params.get('tg_id') }}" style="text-decoration:none;">{{ e.name }}</a></div>
+                  <div class="event-title"><a class="link" href="/group/{{ group[0] }}/events/{{ e.id }}{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="text-decoration:none;">{{ e.name }}</a></div>
                   <div class="event-date">{{ e.time_display }}</div>
                 </div>
                 {% if e.responsible_name %}
                   <div class="responsible">Ответственный: {{ e.responsible_name }}</div>
                 {% endif %}
               {% if is_admin %}
-                <a class="gear" href="/group/{{ group[0] }}/events/{{ e.id }}/settings?tg_id={{ request.query_params.get('tg_id') }}" aria-label="Настройки оповещений">🔔</a>
-                <form method="post" action="/group/{{ group[0] }}/events/{{ e.id }}/update?tg_id={{ request.query_params.get('tg_id') }}" style="margin-top:8px;">
+                <a class="gear" href="/group/{{ group[0] }}/events/{{ e.id }}/settings{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Настройки оповещений">🔔</a>
+                <form method="post" action="/group/{{ group[0] }}/events/{{ e.id }}/update{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="margin-top:8px;">
                   <div class="row">
                     <input class="name-input" type="text" name="name" placeholder="Название" value="{{ e.name }}" />
                     <input class="time-input" type="datetime-local" name="time" value="{{ e.time_input }}" />
@@ -141,16 +141,16 @@
                   </div>
                   <div class="actions" style="justify-content: flex-end; margin-top: 8px; margin-right: -8px;">
                     {% if not e.responsible_user_id and not e.has_any_bookings %}
-                      <form method="post" action="/group/{{ group[0] }}/events/{{ e.id }}/book?tg_id={{ request.query_params.get('tg_id') }}" style="display: inline;">
+                      <form method="post" action="/group/{{ group[0] }}/events/{{ e.id }}/book{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="display: inline;">
                         <button class="btn" type="submit">Забронировать</button>
                       </form>
                     {% elif e.id in booked_ids %}
-                      <form method="post" action="/group/{{ group[0] }}/events/{{ e.id }}/unbook?tg_id={{ request.query_params.get('tg_id') }}" style="display: inline;">
+                      <form method="post" action="/group/{{ group[0] }}/events/{{ e.id }}/unbook{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="display: inline;">
                         <button class="btn" type="submit" style="background: var(--danger);">Снять бронь</button>
                       </form>
                     {% endif %}
                     <button class="btn" type="submit">Сохранить</button>
-                    <form method="post" action="/group/{{ group[0] }}/events/{{ e.id }}/delete?tg_id={{ request.query_params.get('tg_id') }}" style="display: inline;">
+                    <form method="post" action="/group/{{ group[0] }}/events/{{ e.id }}/delete{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="display: inline;">
                       <button class="btn" type="submit" style="background: var(--danger);">Удалить</button>
                     </form>
                   </div>
@@ -171,7 +171,7 @@
                     </form>
                   {% else %}
                     {% if not e.has_any_bookings %}
-                      <form method="post" action="/group/{{ group[0] }}/events/{{ e.id }}/book?tg_id={{ request.query_params.get('tg_id') }}" style="display: inline;">
+                      <form method="post" action="/group/{{ group[0] }}/events/{{ e.id }}/book{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="display: inline;">
                         <button class="btn" type="submit">Забронировать</button>
                       </form>
                     {% endif %}
@@ -186,7 +186,7 @@
 
       {% if is_admin %}
         <h3>Добавить новое мероприятие</h3>
-        <form id="bulkForm" method="post" action="/group/{{ group[0] }}/events/create-multiple?tg_id={{ request.query_params.get('tg_id') }}">
+        <form id="bulkForm" method="post" action="/group/{{ group[0] }}/events/create-multiple{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">
           <div id="rows"></div>
           <div style="margin-top:8px; display:flex; gap:8px;">
             <button class="btn" type="button" id="addRow">＋ Добавить строку</button>
@@ -349,7 +349,7 @@
       // Add tg_id to all forms automatically
       function addTgIdToForms() {
         const tgId = new URLSearchParams(window.location.search).get('tg_id');
-        if (tgId) {
+        if (tgId && tgId !== 'None') {
           const forms = document.querySelectorAll('form');
           forms.forEach(form => {
             // Check if form already has tg_id input
@@ -400,7 +400,7 @@
         const formData = new FormData();
         formData.append('message', message);
         
-        fetch('/group/{{ group[0] }}/send-group-message?tg_id={{ request.query_params.get('tg_id') }}', {
+        fetch('/group/{{ group[0] }}/send-group-message{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}', {
           method: 'POST',
           body: formData
         })

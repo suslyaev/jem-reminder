@@ -207,7 +207,7 @@
       // Add tg_id to all forms automatically
       function addTgIdToForms() {
         const tgId = new URLSearchParams(window.location.search).get('tg_id');
-        if (tgId) {
+        if (tgId && tgId !== 'None') {
           const forms = document.querySelectorAll('form');
           forms.forEach(form => {
             // Check if form already has tg_id input

@@ -786,31 +786,8 @@ async def cb_event_personal_notifications(callback: types.CallbackQuery):
         return
     internal_user_id = urow[0]
     
-    # If user has no personal notifications, seed once:
-    existing = PersonalEventNotificationRepo.list_by_user_and_event(internal_user_id, eid_i)
-    ev = EventRepo.get_by_id(eid_i)
-    if ev:
-        _eid, _name, _time_str, _group_id, _resp_uid = ev
-        if not existing and _resp_uid and _resp_uid == internal_user_id:
-            # 1) Owner's personal notifications for this event
-            grp = GroupRepo.get_by_id(_group_id)
-            owner_uid = grp[3] if grp else None
-            owner_personals = PersonalEventNotificationRepo.list_by_user_and_event(owner_uid, eid_i) if owner_uid else []
-            seeded = False
-            if owner_personals:
-                for _pid, time_before, time_unit, message_text in owner_personals:
-                    PersonalEventNotificationRepo.add_notification(internal_user_id, eid_i, time_before, time_unit, message_text)
-                seeded = True
-            if not seeded:
-                # 2) Event notifications
-                base = EventNotificationRepo.list_by_event(eid_i)
-                if base:
-                    for _nid, time_before, time_unit, message_text in base:
-                        PersonalEventNotificationRepo.add_notification(internal_user_id, eid_i, time_before, time_unit, message_text)
-                    seeded = True
-            if not seeded:
-                # 3) Group defaults
-                PersonalEventNotificationRepo.create_from_group_for_user(eid_i, _group_id, internal_user_id)
+    # Personal notifications are now handled automatically by set_responsible
+    # No need to seed them manually here
     # Use the new refresh function
     await refresh_personal_notifications_view(callback.message, eid_i, gid_i, internal_user_id)
 
@@ -1130,31 +1107,8 @@ async def cb_evt_book_toggle(callback: types.CallbackQuery):
                 RoleRepo.add_role(internal_user_id, gid_i, 'member', confirmed=True)
         except Exception:
             pass
-        # Seed personal notifications for the new responsible IF none exist
-        existing_personal = PersonalEventNotificationRepo.list_by_user_and_event(internal_user_id, eid_i)
-        if not existing_personal:
-            ev2 = EventRepo.get_by_id(eid_i)
-            if ev2:
-                _id2, _name2, _time2, group_id2, _resp2 = ev2
-                # 1) Try to copy owner's personal notifications for this event
-                grp = GroupRepo.get_by_id(group_id2)
-                owner_uid = grp[3] if grp else None
-                owner_personals = PersonalEventNotificationRepo.list_by_user_and_event(owner_uid, eid_i) if owner_uid else []
-                seeded = False
-                if owner_personals:
-                    for _pid, time_before, time_unit, message_text in owner_personals:
-                        PersonalEventNotificationRepo.add_notification(internal_user_id, eid_i, time_before, time_unit, message_text)
-                    seeded = True
-                if not seeded:
-                    # 2) Fallback to event-specific notifications
-                    event_notifs = EventNotificationRepo.list_by_event(eid_i)
-                    if event_notifs:
-                        for _nid, time_before, time_unit, message_text in event_notifs:
-                            PersonalEventNotificationRepo.add_notification(internal_user_id, eid_i, time_before, time_unit, message_text)
-                        seeded = True
-                if not seeded:
-                    # 3) Fallback to group settings if no event-level notifications
-                    PersonalEventNotificationRepo.create_from_group_for_user(eid_i, group_id2, internal_user_id)
+        # Set responsible user - this will handle personal notifications correctly
+        EventRepo.set_responsible(eid_i, internal_user_id)
     else:
         # Allow the responsible themselves to unbook; otherwise require owner/admin/superadmin
         urow = UserRepo.get_by_telegram_id(callback.from_user.id)
@@ -1525,10 +1479,8 @@ async def on_freeform_input(message: types.Message):
                     return
                 time_store = dt.strftime('%Y-%m-%d %H:%M:%S')
                 event_id = EventRepo.create(gid, ectx.get('name','Без названия'), time_store)
-                # Auto-create event notifications based on all group settings
+                # Auto-create event notifications based on group settings
                 EventNotificationRepo.create_from_group_defaults(event_id, gid)
-                # Auto-create personal notifications for all group members based on group settings
-                PersonalEventNotificationRepo.create_from_group_for_all_users(event_id, gid)
                 # refresh events list
                 from aiogram.utils.keyboard import InlineKeyboardBuilder
                 events = EventRepo.list_by_group(gid)

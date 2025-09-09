@@ -30,6 +30,15 @@ env = Environment(
     autoescape=select_autoescape(['html', 'xml'])
 )
 
+# Add filter for safe tg_id handling
+def safe_tg_id(tg_id):
+    """Return tg_id if it's valid, otherwise return None"""
+    if tg_id and tg_id != 'None':
+        return tg_id
+    return None
+
+env.filters['safe_tg_id'] = safe_tg_id
+
 app = FastAPI(title="JEM Reminder")
 app.mount('/static', StaticFiles(directory=STATIC_DIR.as_posix()), name='static')
 
@@ -403,10 +412,11 @@ async def group_settings(request: Request, gid: int, tg_id: str | None = None):
         role = _require_admin(user_id, gid)
     except:
         # If not admin, get user role for display purposes
-        role = GroupRepo.get_user_role_in_group(user_id, gid)
+        role = RoleRepo.get_user_role(user_id, gid)
     group = GroupRepo.get_by_id(gid)
     notifications = NotificationRepo.list_notifications(gid)
-    personal_notifications = PersonalEventNotificationRepo.list_personal_settings(user_id)
+    # Load personal notification templates for this group
+    personal_notifications = NotificationRepo.list_personal_notifications(gid)
     pending = RoleRepo.list_pending_admins(gid)
     admins = GroupRepo.list_group_admins(gid)
     members = GroupRepo.list_group_members_detailed(gid)
@@ -421,7 +431,10 @@ async def group_settings(request: Request, gid: int, tg_id: str | None = None):
             display_name = DisplayNameRepo.get_display_name(gid, uid)
         member_display_names[uid] = display_name
     role_map = {'superadmin': 'СУПЕРАДМИН', 'owner': 'ВЛАДЕЛЕЦ', 'admin': 'АДМИН', 'member': 'УЧАСТНИК'}
-    return render('group_settings.html', group=group, role=role, notifications=notifications, personal_notifications=personal_notifications, pending=pending, admins=admins, members=members, current_display_name=current_display_name, member_display_names=member_display_names, role_map=role_map, request=request)
+    event_count = GroupRepo.count_group_events(gid)
+    notifications_count = len(notifications)
+    personal_notifications_count = len(personal_notifications)
+    return render('group_settings.html', group=group, role=role, notifications=notifications, personal_notifications=personal_notifications, pending=pending, admins=admins, members=members, current_display_name=current_display_name, member_display_names=member_display_names, role_map=role_map, event_count=event_count, notifications_count=notifications_count, personal_notifications_count=personal_notifications_count, request=request)
 
 
 @app.post('/group/{gid}/settings/notifications/add')
@@ -438,7 +451,7 @@ async def add_group_notification_text_get(request: Request, gid: int, tg_id: str
     return RedirectResponse(f"/group/{gid}/settings?ok=method_error", status_code=303)
 
 @app.post('/group/{gid}/settings/notifications/add-text')
-async def add_group_notification_text(request: Request, gid: int, notification_text: str = Form(...), tg_id: str | None = None):
+async def add_group_notification_text(request: Request, gid: int, notification_text: str = Form(...), message_text: str = Form(""), tg_id: str | None = None):
     urow = _require_user(tg_id, request)
     user_id = urow[0]
     _require_admin(user_id, gid)
@@ -463,20 +476,24 @@ async def add_group_notification_text(request: Request, gid: int, notification_t
         time_before = minutes // 1440
         time_unit = 'days'
     
-    # Extract message from text (remove time expressions)
-    import re
-    pattern_global = re.compile(r'(?:за|через)?\s*(\d+)\s*(день|дн(?:я|ей|ь)|нед(?:еля|ели|ель)|мес(?:яц|яца|яцев)|час(?:а|ов)?|ч|мин(?:ут|уты|ут)?|м)', re.IGNORECASE)
-    cleaned = pattern_global.sub('', text)
-    cleaned = re.sub(r'[\s,]+', ' ', cleaned).strip()
-    if cleaned.lower().startswith('напомнить'):
-        cleaned = cleaned[9:].strip()
-    message_text_tail = cleaned if cleaned else None
+    # Use provided message_text or extract from notification_text
+    final_message_text = message_text.strip() if message_text.strip() else None
     
-    NotificationRepo.add_notification(gid, time_before, time_unit, message_text_tail)
+    if not final_message_text:
+        # Extract message from text (remove time expressions) as fallback
+        import re
+        pattern_global = re.compile(r'(?:за|через)?\s*(\d+)\s*(день|дн(?:я|ей|ь)|нед(?:еля|ели|ель)|мес(?:яц|яца|яцев)|час(?:а|ов)?|ч|мин(?:ут|уты|ут)?|м)', re.IGNORECASE)
+        cleaned = pattern_global.sub('', text)
+        cleaned = re.sub(r'[\s,]+', ' ', cleaned).strip()
+        if cleaned.lower().startswith('напомнить'):
+            cleaned = cleaned[9:].strip()
+        final_message_text = cleaned if cleaned else None
+    
+    NotificationRepo.add_notification(gid, time_before, time_unit, final_message_text)
     return RedirectResponse(f"/group/{gid}/settings?ok=notification_added", status_code=303)
 
 @app.post('/group/{gid}/settings/personal-notifications/add-text')
-async def add_personal_notification_text(request: Request, gid: int, notification_text: str = Form(...), tg_id: str | None = None):
+async def add_personal_notification_text(request: Request, gid: int, notification_text: str = Form(...), message_text: str = Form(""), tg_id: str | None = None):
     urow = _require_user(tg_id, request)
     user_id = urow[0]
     
@@ -500,23 +517,28 @@ async def add_personal_notification_text(request: Request, gid: int, notificatio
         time_before = minutes // 1440
         time_unit = 'days'
     
-    # Extract message from text (remove time expressions)
-    import re
-    pattern_global = re.compile(r'(?:за|через)?\s*(\d+)\s*(день|дн(?:я|ей|ь)|нед(?:еля|ели|ель)|мес(?:яц|яца|яцев)|час(?:а|ов)?|ч|мин(?:ут|уты|ут)?|м)', re.IGNORECASE)
-    cleaned = pattern_global.sub('', text)
-    cleaned = re.sub(r'[\s,]+', ' ', cleaned).strip()
-    if cleaned.lower().startswith('напомнить'):
-        cleaned = cleaned[9:].strip()
-    message_text_tail = cleaned if cleaned else None
+    # Use provided message_text or extract from notification_text
+    final_message_text = message_text.strip() if message_text.strip() else None
     
-    PersonalEventNotificationRepo.add_personal_notification(user_id, time_before, time_unit, message_text_tail)
+    if not final_message_text:
+        # Extract message from text (remove time expressions) as fallback
+        import re
+        pattern_global = re.compile(r'(?:за|через)?\s*(\d+)\s*(день|дн(?:я|ей|ь)|нед(?:еля|ели|ель)|мес(?:яц|яца|яцев)|час(?:а|ов)?|ч|мин(?:ут|уты|ут)?|м)', re.IGNORECASE)
+        cleaned = pattern_global.sub('', text)
+        cleaned = re.sub(r'[\s,]+', ' ', cleaned).strip()
+        if cleaned.lower().startswith('напомнить'):
+            cleaned = cleaned[9:].strip()
+        final_message_text = cleaned if cleaned else None
+    
+    # Add personal notification template
+    NotificationRepo.add_notification(gid, time_before, time_unit, final_message_text, notification_type='personal')
     return RedirectResponse(f"/group/{gid}/settings?ok=personal_notification_added", status_code=303)
 
 @app.post('/group/{gid}/settings/personal-notifications/{nid}/delete')
 async def delete_personal_notification(request: Request, gid: int, nid: int, tg_id: str | None = None):
     urow = _require_user(tg_id, request)
     user_id = urow[0]
-    PersonalEventNotificationRepo.delete_personal_notification(user_id, nid)
+    NotificationRepo.delete_notification(nid)
     return RedirectResponse(f"/group/{gid}/settings?ok=personal_notification_deleted", status_code=303)
 
 @app.post('/group/{gid}/send-message')
@@ -895,5 +917,37 @@ async def make_member_admin(request: Request, gid: int, uid: int, tg_id: str | N
     # Add as pending admin
     RoleRepo.add_pending_admin(gid, str(uid), 'id', user_id)
     return RedirectResponse(f"/group/{gid}/settings?ok=member_made_admin", status_code=303)
+
+
+@app.post('/group/{gid}/delete')
+async def delete_group(request: Request, gid: int, tg_id: str | None = None):
+    """Delete group and all associated data"""
+    print(f"DELETE GROUP: gid={gid}, tg_id={tg_id}")
+    urow = _require_user(tg_id, request)
+    user_id = urow[0]
+    
+    # Check if user is owner or superadmin
+    role = RoleRepo.get_user_role(user_id, gid)
+    if role not in ['owner', 'superadmin']:
+        raise HTTPException(status_code=403, detail="Only group owner or superadmin can delete group")
+    
+    # Delete group - CASCADE will handle all associated data
+    try:
+        # Delete group itself - CASCADE will automatically delete:
+        # - notification_settings (group and personal templates)
+        # - user_group_roles (roles)
+        # - pending_admins (pending admin requests)
+        # - events (and their notifications via CASCADE)
+        # - user_display_names (display names)
+        GroupRepo.delete_group(gid)
+        
+        print(f"Group {gid} deleted successfully by user {user_id}")
+        
+    except Exception as e:
+        print(f"Error deleting group {gid}: {e}")
+        raise HTTPException(status_code=500, detail=f"Error deleting group: {str(e)}")
+    
+    # Redirect to main page
+    return RedirectResponse(url="/?ok=group_deleted", status_code=303)
 
 

@@ -1,13 +1,44 @@
 import sqlite3
 from pathlib import Path
 from typing import Optional, List, Tuple
+from datetime import datetime, timedelta
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 DB_PATH = BASE_DIR / 'data' / 'bot_v2.db'
 
 
 def get_conn():
-    return sqlite3.connect(DB_PATH.as_posix())
+    conn = sqlite3.connect(DB_PATH.as_posix())
+    # Enable foreign keys for CASCADE operations
+    conn.execute('PRAGMA foreign_keys = ON')
+    return conn
+
+
+def _is_notification_time_future(event_time_str: str, time_before: int, time_unit: str) -> bool:
+    """Check if notification time is in the future."""
+    try:
+        # Parse event time
+        event_time = datetime.fromisoformat(event_time_str.replace('Z', '+00:00'))
+        
+        # Calculate notification time
+        if time_unit == 'minutes':
+            notification_time = event_time - timedelta(minutes=time_before)
+        elif time_unit == 'hours':
+            notification_time = event_time - timedelta(hours=time_before)
+        elif time_unit == 'days':
+            notification_time = event_time - timedelta(days=time_before)
+        elif time_unit == 'weeks':
+            notification_time = event_time - timedelta(weeks=time_before)
+        elif time_unit == 'months':
+            # Approximate months as 30 days
+            notification_time = event_time - timedelta(days=time_before * 30)
+        else:
+            return False
+        
+        # Check if notification time is in the future
+        return notification_time > datetime.now()
+    except Exception:
+        return False
 
 
 class UserRepo:
@@ -173,6 +204,14 @@ class GroupRepo:
             row = cur.fetchone()
             return row[0] if row else 0
 
+    @staticmethod
+    def delete_group(group_id: int):
+        """Delete a group"""
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("DELETE FROM groups WHERE id = ?", (group_id,))
+            conn.commit()
+
 
 class RoleRepo:
     @staticmethod
@@ -298,34 +337,67 @@ class RoleRepo:
             cur.execute("SELECT 1 FROM pending_admins WHERE identifier_type = 'phone' LIMIT 1")
             return cur.fetchone() is not None
 
+    @staticmethod
+    def delete_by_group(group_id: int):
+        """Delete all roles for a group"""
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("DELETE FROM user_group_roles WHERE group_id = ?", (group_id,))
+            conn.commit()
+
 
 class NotificationRepo:
     @staticmethod
     def ensure_defaults(group_id: int) -> None:
         with get_conn() as conn:
             cur = conn.cursor()
-            cur.execute("SELECT 1 FROM notification_settings WHERE group_id = ?", (group_id,))
-            if not cur.fetchone():
+            
+            # Check if group has group templates
+            cur.execute("SELECT 1 FROM notification_settings WHERE group_id = ? AND type = 'group'", (group_id,))
+            has_group_templates = cur.fetchone() is not None
+            
+            # Check if group has personal templates
+            cur.execute("SELECT 1 FROM notification_settings WHERE group_id = ? AND type = 'personal'", (group_id,))
+            has_personal_templates = cur.fetchone() is not None
+            
+            # Create group templates if missing
+            if not has_group_templates:
                 cur.execute(
-                    "INSERT INTO notification_settings (group_id, time_before, time_unit, message_text, is_default) VALUES (?,?,?,?,1)",
-                    (group_id, 1, 'days', 'Напоминание: скоро мероприятие!')
+                    "INSERT INTO notification_settings (group_id, time_before, time_unit, message_text, is_default, type) VALUES (?,?,?,?,1,'group')",
+                    (group_id, 3, 'days', 'Скоро мероприятие')
                 )
                 cur.execute(
-                    "INSERT INTO notification_settings (group_id, time_before, time_unit, message_text, is_default) VALUES (?,?,?,?,1)",
-                    (group_id, 2, 'hours', 'Напоминание: через 2 часа мероприятие!')
+                    "INSERT INTO notification_settings (group_id, time_before, time_unit, message_text, is_default, type) VALUES (?,?,?,?,1,'group')",
+                    (group_id, 2, 'days', 'Скоро мероприятие')
                 )
                 cur.execute(
-                    "INSERT INTO notification_settings (group_id, time_before, time_unit, message_text, is_default) VALUES (?,?,?,?,1)",
-                    (group_id, 3, 'days', 'Напоминание: через 3 дня мероприятие!')
+                    "INSERT INTO notification_settings (group_id, time_before, time_unit, message_text, is_default, type) VALUES (?,?,?,?,1,'group')",
+                    (group_id, 2, 'hours', 'Скоро мероприятие')
                 )
-                conn.commit()
+            
+            # Create personal templates if missing
+            if not has_personal_templates:
+                cur.execute(
+                    "INSERT INTO notification_settings (group_id, time_before, time_unit, message_text, is_default, type) VALUES (?,?,?,?,1,'personal')",
+                    (group_id, 3, 'days', 'Скоро мероприятие')
+                )
+                cur.execute(
+                    "INSERT INTO notification_settings (group_id, time_before, time_unit, message_text, is_default, type) VALUES (?,?,?,?,1,'personal')",
+                    (group_id, 2, 'days', 'Скоро мероприятие')
+                )
+                cur.execute(
+                    "INSERT INTO notification_settings (group_id, time_before, time_unit, message_text, is_default, type) VALUES (?,?,?,?,1,'personal')",
+                    (group_id, 2, 'hours', 'Скоро мероприятие')
+                )
+            
+            conn.commit()
 
     @staticmethod
-    def add_notification(group_id: int, time_before: int, time_unit: str, message_text: Optional[str], is_default: int = 0) -> int:
+    def add_notification(group_id: int, time_before: int, time_unit: str, message_text: Optional[str], is_default: int = 0, notification_type: str = 'group') -> int:
         with get_conn() as conn:
             cur = conn.cursor()
-            cur.execute("INSERT INTO notification_settings (group_id, time_before, time_unit, message_text, is_default) VALUES (?,?,?,?,?)",
-                        (group_id, time_before, time_unit, message_text, is_default))
+            cur.execute("INSERT INTO notification_settings (group_id, time_before, time_unit, message_text, is_default, type) VALUES (?,?,?,?,?,?)",
+                        (group_id, time_before, time_unit, message_text, is_default, notification_type))
             conn.commit()
             return cur.lastrowid
 
@@ -333,7 +405,14 @@ class NotificationRepo:
     def list_notifications(group_id: int) -> List[Tuple]:
         with get_conn() as conn:
             cur = conn.cursor()
-            cur.execute("SELECT id, time_before, time_unit, message_text, is_default FROM notification_settings WHERE group_id = ? ORDER BY time_before", (group_id,))
+            cur.execute("SELECT id, time_before, time_unit, message_text, is_default FROM notification_settings WHERE group_id = ? AND type = 'group' ORDER BY time_before", (group_id,))
+            return cur.fetchall()
+
+    @staticmethod
+    def list_personal_notifications(group_id: int) -> List[Tuple]:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT id, time_before, time_unit, message_text, is_default FROM notification_settings WHERE group_id = ? AND type = 'personal' ORDER BY time_before", (group_id,))
             return cur.fetchall()
 
     @staticmethod
@@ -357,6 +436,14 @@ class NotificationRepo:
             """, (user_id, group_id))
             row = cur.fetchone()
             return row[0] if row else 'member'
+
+    @staticmethod
+    def delete_by_group(group_id: int):
+        """Delete all group notifications"""
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("DELETE FROM notification_settings WHERE group_id = ?", (group_id,))
+            conn.commit()
 
 
 class EventRepo:
@@ -407,8 +494,29 @@ class EventRepo:
     def set_responsible(event_id: int, user_id: Optional[int]) -> None:
         with get_conn() as conn:
             cur = conn.cursor()
+            
+            # Get current responsible user before updating
+            cur.execute("SELECT responsible_user_id FROM events WHERE id = ?", (event_id,))
+            current_responsible = cur.fetchone()
+            current_responsible_id = current_responsible[0] if current_responsible else None
+            
+            # Update responsible user
             cur.execute("UPDATE events SET responsible_user_id = ? WHERE id = ?", (user_id, event_id))
             conn.commit()
+            
+            # Get group_id for this event
+            cur.execute("SELECT group_id FROM events WHERE id = ?", (event_id,))
+            group_row = cur.fetchone()
+            if group_row:
+                group_id = group_row[0]
+                
+                # If there was a previous responsible user, remove their personal notifications
+                if current_responsible_id:
+                    PersonalEventNotificationRepo.delete_by_user_and_event(current_responsible_id, event_id)
+                
+                # If new user is assigned, create personal notifications
+                if user_id:
+                    PersonalEventNotificationRepo.create_from_personal_templates(event_id, group_id, user_id)
 
     @staticmethod
     def update_name(event_id: int, name: str) -> None:
@@ -435,23 +543,40 @@ class EventRepo:
             )
             return cur.fetchall()
 
+    @staticmethod
+    def delete_by_group(group_id: int):
+        """Delete all events in a group"""
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("DELETE FROM events WHERE group_id = ?", (group_id,))
+            conn.commit()
+
 
 class EventNotificationRepo:
     @staticmethod
     def create_from_group_defaults(event_id: int, group_id: int) -> None:
-        """Create event notifications based on ALL group notification settings."""
+        """Create event notifications based on group notification settings (type='group' only)."""
         with get_conn() as conn:
             cur = conn.cursor()
-            # Get ALL group notifications (both default and custom)
-            cur.execute("SELECT time_before, time_unit, message_text FROM notification_settings WHERE group_id = ?", (group_id,))
-            all_notifications = cur.fetchall()
+            # Get event time
+            cur.execute("SELECT time FROM events WHERE id = ?", (event_id,))
+            event_time_row = cur.fetchone()
+            if not event_time_row:
+                return
+            event_time_str = event_time_row[0]
             
-            # Create event notifications based on all group settings
-            for time_before, time_unit, message_text in all_notifications:
-                cur.execute(
-                    "INSERT INTO event_notifications (event_id, time_before, time_unit, message_text) VALUES (?,?,?,?)",
-                    (event_id, time_before, time_unit, message_text)
-                )
+            # Get only group notification settings (type='group')
+            cur.execute("SELECT time_before, time_unit, message_text FROM notification_settings WHERE group_id = ? AND type = 'group'", (group_id,))
+            group_notifications = cur.fetchall()
+            
+            # Create event notifications based on group settings
+            for time_before, time_unit, message_text in group_notifications:
+                # Check if notification time is in the future
+                if _is_notification_time_future(event_time_str, time_before, time_unit):
+                    cur.execute(
+                        "INSERT INTO event_notifications (event_id, time_before, time_unit, message_text) VALUES (?,?,?,?)",
+                        (event_id, time_before, time_unit, message_text)
+                    )
             conn.commit()
 
     @staticmethod
@@ -486,24 +611,74 @@ class EventNotificationRepo:
             conn.commit()
             return cur.rowcount > 0
 
+    @staticmethod
+    def delete_by_group(group_id: int):
+        """Delete all event notifications for events in a group"""
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                DELETE FROM event_notifications 
+                WHERE event_id IN (SELECT id FROM events WHERE group_id = ?)
+            """, (group_id,))
+            conn.commit()
+
 
 class PersonalEventNotificationRepo:
     @staticmethod
     def create_from_group_for_user(event_id: int, group_id: int, user_id: int) -> None:
-        """Create personal notifications for ONE user from group's settings (idempotent)."""
+        """Create personal notifications for ONE user from group's personal settings (idempotent)."""
         with get_conn() as conn:
             cur = conn.cursor()
-            cur.execute("SELECT time_before, time_unit, message_text FROM notification_settings WHERE group_id = ?", (group_id,))
-            group_notifications = cur.fetchall()
-            for time_before, time_unit, message_text in group_notifications:
-                cur.execute(
-                    """
-                    INSERT OR IGNORE INTO personal_event_notifications 
-                    (user_id, event_id, time_before, time_unit, message_text) 
-                    VALUES (?,?,?,?,?)
-                    """,
-                    (user_id, event_id, time_before, time_unit, message_text)
-                )
+            # Get event time
+            cur.execute("SELECT time FROM events WHERE id = ?", (event_id,))
+            event_time_row = cur.fetchone()
+            if not event_time_row:
+                return
+            event_time_str = event_time_row[0]
+            
+            # Get only personal notification settings (type='personal')
+            cur.execute("SELECT time_before, time_unit, message_text FROM notification_settings WHERE group_id = ? AND type = 'personal'", (group_id,))
+            personal_notifications = cur.fetchall()
+            
+            for time_before, time_unit, message_text in personal_notifications:
+                # Check if notification time is in the future
+                if _is_notification_time_future(event_time_str, time_before, time_unit):
+                    cur.execute(
+                        """
+                        INSERT OR IGNORE INTO personal_event_notifications 
+                        (user_id, event_id, time_before, time_unit, message_text) 
+                        VALUES (?,?,?,?,?)
+                        """,
+                        (user_id, event_id, time_before, time_unit, message_text)
+                    )
+            conn.commit()
+
+    @staticmethod
+    def create_from_personal_templates(event_id: int, group_id: int, user_id: int) -> None:
+        """Create personal notifications for a specific user based on personal templates."""
+        with get_conn() as conn:
+            cur = conn.cursor()
+            # Get event time
+            cur.execute("SELECT time FROM events WHERE id = ?", (event_id,))
+            event_time_row = cur.fetchone()
+            if not event_time_row:
+                return
+            event_time_str = event_time_row[0]
+            
+            # Get personal notification settings (type='personal')
+            cur.execute("SELECT time_before, time_unit, message_text FROM notification_settings WHERE group_id = ? AND type = 'personal'", (group_id,))
+            personal_notifications = cur.fetchall()
+            
+            # Create personal notifications for this user
+            for time_before, time_unit, message_text in personal_notifications:
+                # Check if notification time is in the future
+                if _is_notification_time_future(event_time_str, time_before, time_unit):
+                    # Use INSERT OR IGNORE to avoid duplicates
+                    cur.execute("""
+                        INSERT OR IGNORE INTO personal_event_notifications 
+                        (user_id, event_id, time_before, time_unit, message_text) 
+                        VALUES (?,?,?,?,?)
+                    """, (user_id, event_id, time_before, time_unit, message_text))
             conn.commit()
 
     @staticmethod
@@ -520,13 +695,13 @@ class PersonalEventNotificationRepo:
             """, (group_id,))
             group_members = cur.fetchall()
             
-            # Get all group notification settings
-            cur.execute("SELECT time_before, time_unit, message_text FROM notification_settings WHERE group_id = ?", (group_id,))
-            group_notifications = cur.fetchall()
+            # Get personal notification settings (type='personal')
+            cur.execute("SELECT time_before, time_unit, message_text FROM notification_settings WHERE group_id = ? AND type = 'personal'", (group_id,))
+            personal_notifications = cur.fetchall()
             
             # Create personal notifications for each user
             for user_id, in group_members:
-                for time_before, time_unit, message_text in group_notifications:
+                for time_before, time_unit, message_text in personal_notifications:
                     # Use INSERT OR IGNORE to avoid duplicates
                     cur.execute("""
                         INSERT OR IGNORE INTO personal_event_notifications 
@@ -560,6 +735,14 @@ class PersonalEventNotificationRepo:
             cur.execute("DELETE FROM personal_event_notifications WHERE id = ? AND user_id = ?", (notification_id, user_id))
             conn.commit()
             return cur.rowcount > 0
+
+    @staticmethod
+    def delete_by_user_and_event(user_id: int, event_id: int) -> None:
+        """Delete all personal notifications for a specific user and event."""
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("DELETE FROM personal_event_notifications WHERE user_id = ? AND event_id = ?", (user_id, event_id))
+            conn.commit()
 
     @staticmethod
     def delete_all_for_user_event(user_id: int, event_id: int) -> None:
@@ -615,6 +798,17 @@ class PersonalEventNotificationRepo:
                 DELETE FROM personal_event_notifications 
                 WHERE id = ? AND user_id = ? AND event_id IS NULL
             """, (notification_id, user_id))
+            conn.commit()
+
+    @staticmethod
+    def delete_by_group(group_id: int):
+        """Delete all personal event notifications for events in a group"""
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                DELETE FROM personal_event_notifications 
+                WHERE event_id IN (SELECT id FROM events WHERE group_id = ?)
+            """, (group_id,))
             conn.commit()
 
 
@@ -707,6 +901,17 @@ class BookingRepo:
             )
             return cur.fetchall()
 
+    @staticmethod
+    def delete_by_group(group_id: int):
+        """Delete all bookings for events in a group"""
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                DELETE FROM bookings 
+                WHERE event_id IN (SELECT id FROM events WHERE group_id = ?)
+            """, (group_id,))
+            conn.commit()
+
 
 class DisplayNameRepo:
     @staticmethod
@@ -743,5 +948,13 @@ class DisplayNameRepo:
             cur.execute("SELECT display_name FROM user_display_names WHERE group_id = ? AND user_id = ?", (group_id, user_id))
             row = cur.fetchone()
             return row[0] if row else None
+
+    @staticmethod
+    def delete_by_group(group_id: int):
+        """Delete all display names for a group"""
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("DELETE FROM user_display_names WHERE group_id = ?", (group_id,))
+            conn.commit()
 
 

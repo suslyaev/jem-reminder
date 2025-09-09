@@ -24,7 +24,7 @@
   </head>
   <body>
     <div class="container">
-      <a class="link" href="/group/{{ group[0] }}?tg_id={{ request.query_params.get('tg_id') }}">← К группе</a>
+      <a class="link" href="/group/{{ group[0] }}{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">← К группе</a>
       <h2>Настройки группы</h2>
 
       {% if role in ['admin', 'owner', 'superadmin'] %}
@@ -34,7 +34,7 @@
             {% for pid, identifier, itype, created_by, created_at in pending %}
               <li class="item">
                 <div class="title">{{ identifier }} <span class="meta">({{ itype }}) - Не подтвержден</span></div>
-                <form method="post" action="/group/{{ group[0] }}/settings/admins/pending/{{ pid }}/delete?tg_id={{ request.query_params.get('tg_id') }}" style="margin-top:6px;">
+                <form method="post" action="/group/{{ group[0] }}/settings/admins/pending/{{ pid }}/delete{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="margin-top:6px;">
                   <button class="btn" type="submit" style="background:#ef4444;">Удалить приглашение</button>
                 </form>
               </li>
@@ -66,20 +66,20 @@
                 {% if username %} | @{{ username }}{% endif %}
                 {% if phone %} | {{ phone }}{% endif %}
               </div>
-              <form method="post" action="/group/{{ group[0] }}/settings/member/{{ uid }}/display-name?tg_id={{ request.query_params.get('tg_id') }}" style="margin-top:6px;">
+              <form method="post" action="/group/{{ group[0] }}/settings/member/{{ uid }}/display-name{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="margin-top:6px;">
                 <input type="text" name="display_name" placeholder="Отображаемое имя" value="{{ member_display_names.get(uid, '') }}" style="width:300px; margin-bottom:6px;" />
               </form>
               <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:6px;">
-                <form method="post" action="/group/{{ group[0] }}/settings/member/{{ uid }}/display-name?tg_id={{ request.query_params.get('tg_id') }}" style="display:inline-block;">
+                <form method="post" action="/group/{{ group[0] }}/settings/member/{{ uid }}/display-name{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="display:inline-block;">
                   <button class="btn" type="submit">Сохранить имя</button>
                 </form>
                 {% if role in ['admin', 'owner', 'superadmin'] %}
                   {% if role == 'member' %}
-                    <form method="post" action="/group/{{ group[0] }}/settings/member/{{ uid }}/make-admin?tg_id={{ request.query_params.get('tg_id') }}" style="display:inline-block;">
+                    <form method="post" action="/group/{{ group[0] }}/settings/member/{{ uid }}/make-admin{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="display:inline-block;">
                       <button class="btn" type="submit" style="background:#16a34a;">Сделать админом</button>
                     </form>
                   {% elif role in ['admin', 'owner'] %}
-                    <form method="post" action="/group/{{ group[0] }}/settings/admins/{{ uid }}/remove?tg_id={{ request.query_params.get('tg_id') }}" style="display:inline-block;">
+                    <form method="post" action="/group/{{ group[0] }}/settings/admins/{{ uid }}/remove{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="display:inline-block;">
                       <button class="btn" type="submit" style="background:#ef4444;">Убрать из админов</button>
                     </form>
                   {% endif %}
@@ -92,7 +92,7 @@
 
       {% if role in ['admin', 'owner', 'superadmin'] %}
         <h3>Добавить админа</h3>
-        <form method="post" action="/group/{{ group[0] }}/settings/admins/pending/add?tg_id={{ request.query_params.get('tg_id') }}">
+        <form method="post" action="/group/{{ group[0] }}/settings/admins/pending/add{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">
           <select name="identifier_type" style="width:100%; margin-bottom:6px;">
             <option value="id">Telegram ID</option>
             <option value="username">username</option>
@@ -136,8 +136,13 @@
                     {{ time_before }} {{ forms[2] }}
                   {% endif %}
                 </div>
+                {% if message_text %}
+                  <div class="subtitle" style="font-size: 0.8em; color: #9ca3af; margin-top: 4px;">
+                    Сообщение: {{ message_text }}
+                  </div>
+                {% endif %}
                 
-                <form method="post" action="/group/{{ group[0] }}/settings/notifications/{{ nid }}/delete?tg_id={{ request.query_params.get('tg_id') }}" style="position: absolute; top: 8px; right: 8px;">
+                <form method="post" action="/group/{{ group[0] }}/settings/notifications/{{ nid }}/delete{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="position: absolute; top: 8px; right: 8px;">
                   <button type="submit" style="background: #ef4444; color: white; border: none; border-radius: 4px; padding: 4px 8px; cursor: pointer; font-size: 12px;">✕</button>
                 </form>
               </li>
@@ -146,8 +151,9 @@
           {% endif %}
 
           <h4>Добавить групповое оповещение</h4>
-          <form method="post" action="/group/{{ group[0] }}/settings/notifications/add-text?tg_id={{ request.query_params.get('tg_id') }}">
+          <form method="post" action="/group/{{ group[0] }}/settings/notifications/add-text{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">
             <input type="text" name="notification_text" placeholder="Например: за 1 день, за 2 часа, за 30 минут напомнить о встрече" required style="width:335px; margin-bottom:6px;" />
+            <input type="text" name="message_text" placeholder="Сообщение (необязательно)" style="width:335px; margin-bottom:6px;" />
             <button class="btn" type="submit">Добавить</button>
           </form>
         {% else %}
@@ -160,7 +166,7 @@
           <div class="empty">Пока нет личных оповещений</div>
         {% else %}
           <ul class="list">
-            {% for nid, time_before, time_unit, message_text in personal_notifications %}
+            {% for nid, time_before, time_unit, message_text, is_default in personal_notifications %}
               <li class="item" style="position: relative;">
                 <div class="title">
                   {% set unit_map = {
@@ -179,8 +185,13 @@
                     {{ time_before }} {{ forms[2] }}
                   {% endif %}
                 </div>
+                {% if message_text %}
+                  <div class="subtitle" style="font-size: 0.8em; color: #9ca3af; margin-top: 4px;">
+                    Сообщение: {{ message_text }}
+                  </div>
+                {% endif %}
                 
-                <form method="post" action="/group/{{ group[0] }}/settings/personal-notifications/{{ nid }}/delete?tg_id={{ request.query_params.get('tg_id') }}" style="position: absolute; top: 8px; right: 8px;">
+                <form method="post" action="/group/{{ group[0] }}/settings/personal-notifications/{{ nid }}/delete{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="position: absolute; top: 8px; right: 8px;">
                   <button type="submit" style="background: #ef4444; color: white; border: none; border-radius: 4px; padding: 4px 8px; cursor: pointer; font-size: 12px;">✕</button>
                 </form>
               </li>
@@ -189,12 +200,37 @@
         {% endif %}
 
         <h4>Добавить личное оповещение</h4>
-        <form method="post" action="/group/{{ group[0] }}/settings/personal-notifications/add-text?tg_id={{ request.query_params.get('tg_id') }}">
+        <form method="post" action="/group/{{ group[0] }}/settings/personal-notifications/add-text{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">
           <input type="text" name="notification_text" placeholder="Например: за 1 день, за 2 часа, за 30 минут напомнить о встрече" required style="width:335px; margin-bottom:6px;" />
+          <input type="text" name="message_text" placeholder="Сообщение (необязательно)" style="width:335px; margin-bottom:6px;" />
           <button class="btn" type="submit">Добавить</button>
         </form>
       </div>
     </div>
+
+    <!-- Delete Group Section -->
+    {% if role in ['owner', 'superadmin'] %}
+      <div style="margin-top: 40px; padding: 20px; border-top: 2px solid #ef4444; background: var(--card); border-radius: 12px;">
+        <h3 style="color: #ef4444; margin-top: 0;">Опасная зона</h3>
+        <p style="color: var(--muted); margin-bottom: 16px;">
+          Удаление группы приведет к полному удалению всех данных из базы данных, включая:
+        </p>
+        <ul style="color: var(--muted); margin-bottom: 16px; padding-left: 20px;">
+          <li>Все мероприятия группы</li>
+          <li>Все напоминания и уведомления</li>
+          <li>Все настройки и конфигурации</li>
+          <li>История бронирований</li>
+        </ul>
+        <p style="color: var(--muted); margin-bottom: 16px;">
+          <strong>Внимание:</strong> Чтобы группа снова появилась в системе, необходимо удалить бота из группы в Telegram и снова добавить его в качестве администратора.
+        </p>
+        <div style="text-align: center;">
+          <button class="btn" onclick="confirmDeleteGroup()" style="background: #ef4444; color: white; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-size: 16px; font-weight: 600;">
+            🗑️ Удалить группу
+          </button>
+        </div>
+      </div>
+    {% endif %}
 
     <!-- Message Modal -->
     <div id="messageModal" class="modal" style="display: none;">
@@ -213,11 +249,49 @@
       </div>
     </div>
 
+    <!-- Delete Group Modal -->
+    <div id="deleteGroupModal" class="modal" style="display: none;">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3 style="color: #ef4444;">🗑️ Удаление группы</h3>
+          <button class="close-btn" onclick="closeDeleteGroupModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p style="color: #f9fafb; margin-bottom: 16px; font-size: 16px;">
+            <strong>Вы уверены, что хотите удалить группу "{{ group[2] if group else '' }}"?</strong>
+          </p>
+          <div style="background: #1f2937; padding: 16px; border-radius: 8px; margin-bottom: 16px; border-left: 4px solid #ef4444;">
+            <p style="color: #f9fafb; margin: 0 0 8px 0; font-weight: 600;">Это действие удалит:</p>
+            <ul style="color: #d1d5db; margin: 0; padding-left: 20px;">
+              <li>Все мероприятия группы ({{ event_count }} шт.)</li>
+              <li>Все напоминания и уведомления ({{ notifications_count + personal_notifications_count }} шт.)</li>
+              <li>Все настройки и конфигурации</li>
+              <li>Историю бронирований</li>
+            </ul>
+          </div>
+          <p style="color: #fbbf24; margin-bottom: 16px; font-weight: 600;">
+            ⚠️ <strong>Внимание:</strong> Это действие необратимо!
+          </p>
+          <p style="color: #d1d5db; margin: 0; font-size: 14px;">
+            Чтобы группа снова появилась в системе, необходимо удалить бота из группы в Telegram и снова добавить его в качестве администратора.
+          </p>
+        </div>
+        <div class="modal-footer">
+          <form method="post" action="/group/{{ group[0] }}/delete{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="display: inline;">
+            <button class="btn" type="submit" style="background: #ef4444; color: white; font-weight: 600;">
+              🗑️ Да, удалить группу
+            </button>
+          </form>
+          <button class="btn" onclick="closeDeleteGroupModal()" style="background: #6b7280;">Отмена</button>
+        </div>
+      </div>
+    </div>
+
     <script>
       // Add tg_id to all forms automatically
       function addTgIdToForms() {
         const tgId = new URLSearchParams(window.location.search).get('tg_id');
-        if (tgId) {
+        if (tgId && tgId !== 'None') {
           const forms = document.querySelectorAll('form');
           forms.forEach(form => {
             // Check if form already has tg_id input
@@ -229,6 +303,39 @@
               form.appendChild(input);
             }
           });
+        }
+      }
+
+      // Delete group functions
+      function confirmDeleteGroup() {
+        document.getElementById('deleteGroupModal').style.display = 'block';
+        // Add tg_id to the delete form when modal opens
+        addTgIdToForms();
+        
+        // Debug: check if form has tg_id
+        const deleteForm = document.querySelector('#deleteGroupModal form');
+        if (deleteForm) {
+          const tgIdInput = deleteForm.querySelector('input[name="tg_id"]');
+          console.log('Delete form tg_id input:', tgIdInput ? tgIdInput.value : 'NOT FOUND');
+          
+          // Add submit event listener for debugging
+          deleteForm.addEventListener('submit', function(e) {
+            console.log('Delete form submitting...');
+            console.log('Form method:', deleteForm.method);
+            console.log('Form action:', deleteForm.action);
+          });
+        }
+      }
+
+      function closeDeleteGroupModal() {
+        document.getElementById('deleteGroupModal').style.display = 'none';
+      }
+
+      // Close modal when clicking outside
+      window.onclick = function(event) {
+        const deleteModal = document.getElementById('deleteGroupModal');
+        if (event.target === deleteModal) {
+          closeDeleteGroupModal();
         }
       }
       
@@ -297,7 +404,7 @@
         formData.append('recipient_id', currentRecipientId);
         formData.append('message', message);
         
-        fetch('/group/{{ group[0] }}/send-message?tg_id={{ request.query_params.get('tg_id') }}', {
+        fetch('/group/{{ group[0] }}/send-message{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}', {
           method: 'POST',
           body: formData
         })
