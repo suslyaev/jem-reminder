@@ -78,7 +78,7 @@
                     <form method="post" action="/group/{{ group[0] }}/settings/member/{{ uid }}/make-admin{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="display:inline-block;">
                       <button class="btn" type="submit" style="background:#16a34a;">Сделать админом</button>
                     </form>
-                  {% elif role in ['admin', 'owner'] %}
+                  {% elif role in ['admin'] %}
                     <form method="post" action="/group/{{ group[0] }}/settings/admins/{{ uid }}/remove{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="display:inline-block;">
                       <button class="btn" type="submit" style="background:#ef4444;">Убрать из админов</button>
                     </form>

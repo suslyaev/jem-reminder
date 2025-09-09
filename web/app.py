@@ -9,6 +9,9 @@ import base64
 import hmac
 import hashlib
 
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from services.repositories import UserRepo, GroupRepo, EventRepo, RoleRepo, PersonalEventNotificationRepo, NotificationRepo, BookingRepo, DisplayNameRepo, EventNotificationRepo
 
 # Import test configuration from .env
@@ -20,6 +23,10 @@ load_dotenv()
 TEST_TELEGRAM_ID = os.getenv('TEST_TELEGRAM_ID')
 if TEST_TELEGRAM_ID:
     TEST_TELEGRAM_ID = int(TEST_TELEGRAM_ID)
+
+SUPERADMIN_ID = os.getenv('SUPERADMIN_ID')
+if SUPERADMIN_ID:
+    SUPERADMIN_ID = int(SUPERADMIN_ID)
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 TEMPLATES_DIR = BASE_DIR / 'web' / 'templates'
@@ -421,6 +428,13 @@ async def group_settings(request: Request, gid: int, tg_id: str | None = None):
     admins = GroupRepo.list_group_admins(gid)
     members = GroupRepo.list_group_members_detailed(gid)
     current_display_name = DisplayNameRepo.get_display_name(gid, user_id)
+    
+    # Filter out superadmin if current user is not superadmin
+    # Check if current user is superadmin by telegram_id
+    is_superadmin = urow[1] == SUPERADMIN_ID  # urow[1] is telegram_id
+    if not is_superadmin:
+        members = [m for m in members if m[6] != 'superadmin']
+    
     # Get display names for all members, create if not exists
     member_display_names = {}
     for uid, _, _, _, _, _, _ in members:
@@ -841,24 +855,43 @@ async def delete_personal_event_notification(request: Request, gid: int, eid: in
     PersonalEventNotificationRepo.delete_personal_notification(user_id, nid)
     return RedirectResponse(f"/group/{gid}/events/{eid}/settings?ok=personal_notification_deleted", status_code=303)
 
+@app.post('/group/{gid}/events/{eid}/delete')
+async def delete_event(request: Request, gid: int, eid: int, tg_id: str | None = None):
+    urow = _require_user(tg_id, request)
+    user_id = urow[0]
+    _require_admin(user_id, gid)
+    
+    # Delete the event (CASCADE will handle notifications)
+    print(f"DELETE EVENT: eid={eid}, gid={gid}, user_id={user_id}")
+    result = EventRepo.delete(eid)
+    print(f"DELETE RESULT: {result}")
+    
+    return RedirectResponse(f"/group/{gid}?ok=event_deleted", status_code=303)
+
 @app.post('/group/{gid}/events/{eid}/book')
 async def book_event(request: Request, gid: int, eid: int, tg_id: str | None = None):
     urow = _require_user(tg_id, request)
     user_id = urow[0]
     
+    print(f"BOOK EVENT: eid={eid}, gid={gid}, user_id={user_id}")
+    
     # Check if event exists and is not already booked
     event = EventRepo.get_by_id(eid)
+    print(f"EVENT: {event}")
     if not event or event[4]:  # event doesn't exist or already has responsible person
-        return RedirectResponse(f"/group/{gid}/events/{eid}/settings?ok=booking_error", status_code=303)
+        print(f"BOOKING ERROR: event={event}, has_responsible={event[4] if event else 'no event'}")
+        return RedirectResponse(f"/group/{gid}?ok=booking_error", status_code=303)
     
     # Book the event
+    print(f"UPDATING EVENT: setting responsible to {user_id}")
     EventRepo.update_event(eid, event[1], event[2], event[3], user_id)
     BookingRepo.add_booking(user_id, eid)
     
     # Create personal notifications for this user
     PersonalEventNotificationRepo.create_from_group_for_user(eid, gid, user_id)
     
-    return RedirectResponse(f"/group/{gid}/events/{eid}/settings?ok=event_booked", status_code=303)
+    print(f"BOOKING SUCCESS")
+    return RedirectResponse(f"/group/{gid}?ok=event_booked", status_code=303)
 
 
 @app.get('/group/{gid}/events/{eid}', response_class=HTMLResponse)
@@ -873,16 +906,6 @@ async def event_detail(request: Request, gid: int, eid: int, tg_id: str | None =
     bookings = BookingRepo.list_event_bookings_with_names(gid, eid)
     event_time_display, _ = _format_time_display(event[2])
     return render('event_detail.html', group=group, event=event, event_time_display=event_time_display, bookings=bookings, role=_role_label(role or 'participant'), request=request)
-
-
-@app.post('/group/{gid}/events/{eid}/book')
-async def book_event(request: Request, gid: int, eid: int, tg_id: str | None = None):
-    urow = _require_user(tg_id, request)
-    user_id = urow[0]
-    BookingRepo.add_booking(user_id, eid)
-    # Create personal notifications for the user from group defaults on booking
-    PersonalEventNotificationRepo.create_from_group_for_user(eid, gid, user_id)
-    return RedirectResponse(url=f"/group/{gid}?ok=booked", status_code=303)
 
 
 @app.post('/group/{gid}/events/{eid}/unbook')

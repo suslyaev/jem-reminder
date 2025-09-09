@@ -621,9 +621,15 @@ async def cb_event_open(callback: types.CallbackQuery):
 
 @dp.callback_query(lambda c: c.data and c.data.startswith('evt_delete:'))
 async def cb_event_delete(callback: types.CallbackQuery):
-    _, eid, gid = callback.data.split(':')
-    EventRepo.delete(int(eid))
-    await callback.answer("Удалено")
+    try:
+        _, eid, gid = callback.data.split(':')
+        print(f"DELETE EVENT: eid={eid}, gid={gid}")
+        result = EventRepo.delete(int(eid))
+        print(f"DELETE RESULT: {result}")
+        await callback.answer("Удалено")
+    except Exception as e:
+        print(f"DELETE ERROR: {e}")
+        await callback.answer(f"Ошибка: {e}")
     # refresh list
     from aiogram.utils.keyboard import InlineKeyboardBuilder
     gid_i = int(gid)
@@ -1075,10 +1081,16 @@ async def cb_group_remind_period(callback: types.CallbackQuery):
 
 @dp.callback_query(lambda c: c.data and c.data.startswith('evt_book_toggle:'))
 async def cb_evt_book_toggle(callback: types.CallbackQuery):
-    _, eid, gid = callback.data.split(':')
-    eid_i = int(eid)
-    gid_i = int(gid)
-    await callback.answer()
+    try:
+        _, eid, gid = callback.data.split(':')
+        eid_i = int(eid)
+        gid_i = int(gid)
+        print(f"BOOK TOGGLE: eid={eid_i}, gid={gid_i}, user_id={callback.from_user.id}")
+        await callback.answer()
+    except Exception as e:
+        print(f"BOOK TOGGLE ERROR: {e}")
+        await callback.answer(f"Ошибка: {e}")
+        return
     # Fetch event
     ev = EventRepo.get_by_id(eid_i)
     if not ev:
@@ -1099,7 +1111,6 @@ async def cb_evt_book_toggle(callback: types.CallbackQuery):
             )
             urow = UserRepo.get_by_telegram_id(callback.from_user.id)
         internal_user_id = urow[0]
-        EventRepo.set_responsible(eid_i, internal_user_id)
         # Ensure the user sees the group in their menu only if he has no role yet
         try:
             current_role = RoleRepo.get_user_role(internal_user_id, gid_i)
@@ -1108,7 +1119,9 @@ async def cb_evt_book_toggle(callback: types.CallbackQuery):
         except Exception:
             pass
         # Set responsible user - this will handle personal notifications correctly
+        print(f"SETTING RESPONSIBLE: event_id={eid_i}, user_id={internal_user_id}")
         EventRepo.set_responsible(eid_i, internal_user_id)
+        print(f"RESPONSIBLE SET SUCCESSFULLY")
     else:
         # Allow the responsible themselves to unbook; otherwise require owner/admin/superadmin
         urow = UserRepo.get_by_telegram_id(callback.from_user.id)

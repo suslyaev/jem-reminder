@@ -141,16 +141,16 @@
                   </div>
                   <div class="actions" style="justify-content: flex-end; margin-top: 8px; margin-right: -8px;">
                     {% if not e.responsible_user_id and not e.has_any_bookings %}
-                      <form method="post" action="/group/{{ group[0] }}/events/{{ e.id }}/book{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="display: inline;">
+                      <form method="post" action="/group/{{ group[0] }}/events/{{ e.id }}/book" style="display: inline;">
                         <button class="btn" type="submit">Забронировать</button>
                       </form>
                     {% elif e.id in booked_ids %}
-                      <form method="post" action="/group/{{ group[0] }}/events/{{ e.id }}/unbook{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="display: inline;">
+                      <form method="post" action="/group/{{ group[0] }}/events/{{ e.id }}/unbook" style="display: inline;">
                         <button class="btn" type="submit" style="background: var(--danger);">Снять бронь</button>
                       </form>
                     {% endif %}
                     <button class="btn" type="submit">Сохранить</button>
-                    <form method="post" action="/group/{{ group[0] }}/events/{{ e.id }}/delete{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="display: inline;">
+                    <form method="post" action="/group/{{ group[0] }}/events/{{ e.id }}/delete" style="display: inline;">
                       <button class="btn" type="submit" style="background: var(--danger);">Удалить</button>
                     </form>
                   </div>
@@ -171,7 +171,7 @@
                     </form>
                   {% else %}
                     {% if not e.has_any_bookings %}
-                      <form method="post" action="/group/{{ group[0] }}/events/{{ e.id }}/book{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="display: inline;">
+                      <form method="post" action="/group/{{ group[0] }}/events/{{ e.id }}/book" style="display: inline;">
                         <button class="btn" type="submit">Забронировать</button>
                       </form>
                     {% endif %}
@@ -371,7 +371,7 @@
         const ok = url.searchParams.get('ok');
         if (ok) {
           const toast = document.getElementById('toast');
-          const map = { created: 'Мероприятие создано', updated: 'Сохранено', booked: 'Бронь оформлена', unbooked: 'Бронь снята', name_saved: 'Имя сохранено', noop: 'Нет данных для создания' };
+          const map = { created: 'Мероприятие создано', updated: 'Сохранено', booked: 'Бронь оформлена', unbooked: 'Бронь снята', name_saved: 'Имя сохранено', noop: 'Нет данных для создания', event_deleted: 'Мероприятие удалено', event_booked: 'Мероприятие забронировано', booking_error: 'Ошибка бронирования' };
           toast.textContent = map[ok] || 'Готово';
           toast.style.display = 'block';
           url.searchParams.delete('ok');
