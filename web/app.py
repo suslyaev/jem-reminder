@@ -39,21 +39,32 @@ def render(name: str, **ctx) -> HTMLResponse:
     return HTMLResponse(tpl.render(**ctx))
 
 
-def _require_user(tg_id: int | None, request: Request = None):
+def _require_user(tg_id: str | int | None, request: Request = None):
     # Try to get user data from Telegram Mini App first
     if request:
         telegram_user = get_telegram_user_data(request)
         if telegram_user:
-            tg_id = telegram_user['id']
+            tg_id = str(telegram_user['id'])
+    
+    # Handle string "None" from templates
+    if tg_id == "None":
+        tg_id = None
     
     # Use test ID if no tg_id provided and test mode is enabled
     if tg_id is None and TEST_TELEGRAM_ID:
-        tg_id = TEST_TELEGRAM_ID
+        tg_id = str(TEST_TELEGRAM_ID)
         print(f"Using test Telegram ID: {tg_id}")
     
     if tg_id is None:
         raise HTTPException(status_code=401, detail="tg_id required")
-    urow = UserRepo.get_by_telegram_id(tg_id)
+    
+    # Convert to int for database operations
+    try:
+        tg_id_int = int(tg_id)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid tg_id format")
+    
+    urow = UserRepo.get_by_telegram_id(tg_id_int)
     if not urow:
         raise HTTPException(status_code=403, detail="Unknown user")
     return urow
@@ -202,27 +213,36 @@ def get_telegram_user_data(request: Request) -> dict | None:
 
 
 @app.get('/', response_class=HTMLResponse)
-async def index(request: Request, tg_id: int | None = None):
+async def index(request: Request, tg_id: str | None = None):
     # Try to get user data from Telegram Mini App first
     telegram_user = get_telegram_user_data(request)
     
     if telegram_user:
-        tg_id = telegram_user['id']
+        tg_id = str(telegram_user['id'])
         print(f"Got Telegram user data: {telegram_user}")
     elif tg_id is None and TEST_TELEGRAM_ID:
         # Use test ID if no tg_id provided and test mode is enabled
-        tg_id = TEST_TELEGRAM_ID
+        tg_id = str(TEST_TELEGRAM_ID)
         print(f"Using test Telegram ID for index: {tg_id}")
+    elif tg_id == "None":
+        # Handle string "None" from templates
+        tg_id = None
     
     if tg_id is None:
         # No user data available
         return render('welcome.html', message="Установите TEST_TELEGRAM_ID в файле .env для тестирования", user_info=None, request=request)
     
-    urow = UserRepo.get_by_telegram_id(tg_id)
+    # Convert to int for database operations
+    try:
+        tg_id_int = int(tg_id)
+    except (ValueError, TypeError):
+        return render('welcome.html', message="Неверный ID пользователя", user_info=None, request=request)
+    
+    urow = UserRepo.get_by_telegram_id(tg_id_int)
     if not urow:
         # Create user_info object for display using Telegram data or fallback
         user_info = {
-            'telegram_id': tg_id,
+            'telegram_id': tg_id_int,
             'username': telegram_user.get('username') if telegram_user else None,
             'first_name': telegram_user.get('first_name') if telegram_user else None,
             'last_name': telegram_user.get('last_name') if telegram_user else None
@@ -234,7 +254,7 @@ async def index(request: Request, tg_id: int | None = None):
     phone = urow[3]
     first_name = urow[4]
     last_name = urow[5]
-    display = first_name or username or str(tg_id)
+    display = first_name or username or str(tg_id_int)
     if first_name and last_name:
         display = f"{first_name} {last_name}"
     groups = GroupRepo.list_user_groups_with_roles(user_id)
@@ -244,13 +264,13 @@ async def index(request: Request, tg_id: int | None = None):
     return render('index.html', groups=groups_with_counts, user_info={
         'display': display,
         'username': username,
-        'telegram_id': tg_id,
+        'telegram_id': tg_id_int,
         'phone': phone,
     }, request=request)
 
 
 @app.get('/group/{gid}', response_class=HTMLResponse)
-async def group_view(request: Request, gid: int, tg_id: int | None = None):
+async def group_view(request: Request, gid: int, tg_id: str | None = None):
     urow = _require_user(tg_id, request)
     user_id = urow[0]
     role = RoleRepo.get_user_role(user_id, gid)
@@ -294,7 +314,7 @@ async def group_view(request: Request, gid: int, tg_id: int | None = None):
 
 # --- Event CRUD ---
 @app.post('/group/{gid}/events/create')
-async def create_event(request: Request, gid: int, name: str = Form(...), time: str = Form(...), tg_id: int | None = None):
+async def create_event(request: Request, gid: int, name: str = Form(...), time: str = Form(...), tg_id: str | None = None):
     urow = _require_user(tg_id, request)
     user_id = urow[0]
     _require_admin(user_id, gid)
@@ -308,7 +328,7 @@ async def create_event(request: Request, gid: int, name: str = Form(...), time: 
 
 
 @app.post('/group/{gid}/events/create-multiple')
-async def create_events_multiple(request: Request, gid: int, items: str | None = Form(None), name: list[str] | None = Form(None), time: list[str] | None = Form(None), tg_id: int | None = None):
+async def create_events_multiple(request: Request, gid: int, items: str | None = Form(None), name: list[str] | None = Form(None), time: list[str] | None = Form(None), tg_id: str | None = None):
     """
     Supports two payload formats:
     1) Repeated fields: name=.., time=.. (multiple)
@@ -357,7 +377,7 @@ async def create_events_multiple(request: Request, gid: int, items: str | None =
 
 
 @app.post('/group/{gid}/events/{eid}/update')
-async def update_event(request: Request, gid: int, eid: int, name: str | None = Form(None), time: str | None = Form(None), responsible_user_id: int | None = Form(None), tg_id: int | None = None):
+async def update_event(request: Request, gid: int, eid: int, name: str | None = Form(None), time: str | None = Form(None), responsible_user_id: int | None = Form(None), tg_id: str | None = None):
     urow = _require_user(tg_id, request)
     user_id = urow[0]
     _require_admin(user_id, gid)
@@ -375,7 +395,7 @@ async def update_event(request: Request, gid: int, eid: int, name: str | None = 
 
 # --- Settings: notifications & admins ---
 @app.get('/group/{gid}/settings', response_class=HTMLResponse)
-async def group_settings(request: Request, gid: int, tg_id: int | None = None):
+async def group_settings(request: Request, gid: int, tg_id: str | None = None):
     urow = _require_user(tg_id, request)
     user_id = urow[0]
     # Allow all users to see settings, but restrict admin functions
@@ -405,7 +425,7 @@ async def group_settings(request: Request, gid: int, tg_id: int | None = None):
 
 
 @app.post('/group/{gid}/settings/notifications/add')
-async def add_group_notification(request: Request, gid: int, time_before: int, time_unit: str, message_text: str | None = None, tg_id: int | None = None):
+async def add_group_notification(request: Request, gid: int, time_before: int, time_unit: str, message_text: str | None = None, tg_id: str | None = None):
     urow = _require_user(tg_id, request)
     user_id = urow[0]
     _require_admin(user_id, gid)
@@ -413,12 +433,12 @@ async def add_group_notification(request: Request, gid: int, time_before: int, t
     return RedirectResponse(url=f"/group/{gid}/settings?tg_id={tg_id}", status_code=303)
 
 @app.get('/group/{gid}/settings/notifications/add-text')
-async def add_group_notification_text_get(request: Request, gid: int, tg_id: int | None = None):
+async def add_group_notification_text_get(request: Request, gid: int, tg_id: str | None = None):
     print(f"GET add_group_notification_text: gid={gid}, tg_id={tg_id}")
     return RedirectResponse(f"/group/{gid}/settings?ok=method_error", status_code=303)
 
 @app.post('/group/{gid}/settings/notifications/add-text')
-async def add_group_notification_text(request: Request, gid: int, notification_text: str = Form(...), tg_id: int | None = None):
+async def add_group_notification_text(request: Request, gid: int, notification_text: str = Form(...), tg_id: str | None = None):
     urow = _require_user(tg_id, request)
     user_id = urow[0]
     _require_admin(user_id, gid)
@@ -456,7 +476,7 @@ async def add_group_notification_text(request: Request, gid: int, notification_t
     return RedirectResponse(f"/group/{gid}/settings?ok=notification_added", status_code=303)
 
 @app.post('/group/{gid}/settings/personal-notifications/add-text')
-async def add_personal_notification_text(request: Request, gid: int, notification_text: str = Form(...), tg_id: int | None = None):
+async def add_personal_notification_text(request: Request, gid: int, notification_text: str = Form(...), tg_id: str | None = None):
     urow = _require_user(tg_id, request)
     user_id = urow[0]
     
@@ -493,14 +513,14 @@ async def add_personal_notification_text(request: Request, gid: int, notificatio
     return RedirectResponse(f"/group/{gid}/settings?ok=personal_notification_added", status_code=303)
 
 @app.post('/group/{gid}/settings/personal-notifications/{nid}/delete')
-async def delete_personal_notification(request: Request, gid: int, nid: int, tg_id: int | None = None):
+async def delete_personal_notification(request: Request, gid: int, nid: int, tg_id: str | None = None):
     urow = _require_user(tg_id, request)
     user_id = urow[0]
     PersonalEventNotificationRepo.delete_personal_notification(user_id, nid)
     return RedirectResponse(f"/group/{gid}/settings?ok=personal_notification_deleted", status_code=303)
 
 @app.post('/group/{gid}/send-message')
-async def send_message_to_user(request: Request, gid: int, recipient_id: int = Form(...), message: str = Form(...), tg_id: int | None = None):
+async def send_message_to_user(request: Request, gid: int, recipient_id: int = Form(...), message: str = Form(...), tg_id: str | None = None):
     urow = _require_user(tg_id, request)
     user_id = urow[0]
     
@@ -524,7 +544,7 @@ async def send_message_to_user(request: Request, gid: int, recipient_id: int = F
         return {"success": False, "error": f"Ошибка отправки: {str(e)}"}
 
 @app.post('/group/{gid}/send-group-message')
-async def send_message_to_group(request: Request, gid: int, message: str = Form(...), tg_id: int | None = None):
+async def send_message_to_group(request: Request, gid: int, message: str = Form(...), tg_id: str | None = None):
     print(f"send-group-message: tg_id={tg_id}, gid={gid}, message={message}")
     urow = _require_user(tg_id, request)
     user_id = urow[0]
@@ -553,7 +573,7 @@ async def send_message_to_group(request: Request, gid: int, message: str = Form(
 
 
 @app.post('/group/{gid}/settings/notifications/{nid}/delete')
-async def delete_group_notification(request: Request, gid: int, nid: int, tg_id: int | None = None):
+async def delete_group_notification(request: Request, gid: int, nid: int, tg_id: str | None = None):
     urow = _require_user(tg_id, request)
     user_id = urow[0]
     _require_admin(user_id, gid)
@@ -562,7 +582,7 @@ async def delete_group_notification(request: Request, gid: int, nid: int, tg_id:
 
 
 @app.get('/group/{gid}/events/{eid}/settings', response_class=HTMLResponse)
-async def event_settings(request: Request, gid: int, eid: int, tg_id: int | None = None):
+async def event_settings(request: Request, gid: int, eid: int, tg_id: str | None = None):
     urow = _require_user(tg_id, request)
     user_id = urow[0]
     
@@ -592,7 +612,7 @@ async def event_settings(request: Request, gid: int, eid: int, tg_id: int | None
 
 
 @app.post('/group/{gid}/events/{eid}/notifications/add')
-async def add_event_notification(request: Request, gid: int, eid: int, time_before: int, time_unit: str, message_text: str | None = None, tg_id: int | None = None):
+async def add_event_notification(request: Request, gid: int, eid: int, time_before: int, time_unit: str, message_text: str | None = None, tg_id: str | None = None):
     urow = _require_user(tg_id, request)
     user_id = urow[0]
     _require_admin(user_id, gid)
@@ -600,7 +620,7 @@ async def add_event_notification(request: Request, gid: int, eid: int, time_befo
     return RedirectResponse(url=f"/group/{gid}/events/{eid}/settings?tg_id={tg_id}", status_code=303)
 
 @app.post('/group/{gid}/events/{eid}/notifications/add-text')
-async def add_event_notification_text(request: Request, gid: int, eid: int, notification_text: str = Form(...), message_text: str = Form(""), tg_id: int | None = None):
+async def add_event_notification_text(request: Request, gid: int, eid: int, notification_text: str = Form(...), message_text: str = Form(""), tg_id: str | None = None):
     print(f"add_event_notification_text called: gid={gid}, eid={eid}, tg_id={tg_id}")
     print(f"notification_text='{notification_text}', message_text='{message_text}'")
     urow = _require_user(tg_id, request)
@@ -652,12 +672,12 @@ async def add_event_notification_text(request: Request, gid: int, eid: int, noti
 
 
 @app.get('/group/{gid}/events/{eid}/notifications/add-absolute')
-async def add_event_notification_absolute_get(request: Request, gid: int, eid: int, tg_id: int | None = None):
+async def add_event_notification_absolute_get(request: Request, gid: int, eid: int, tg_id: str | None = None):
     print(f"GET add_event_notification_absolute: gid={gid}, eid={eid}, tg_id={tg_id}")
     return RedirectResponse(f"/group/{gid}/events/{eid}/settings?ok=method_error", status_code=303)
 
 @app.post('/group/{gid}/events/{eid}/notifications/add-absolute')
-async def add_event_notification_absolute(request: Request, gid: int, eid: int, date: str = Form(...), time: str = Form(...), message_text: str = Form(None), tg_id: int | None = None):
+async def add_event_notification_absolute(request: Request, gid: int, eid: int, date: str = Form(...), time: str = Form(...), message_text: str = Form(None), tg_id: str | None = None):
     print(f"POST add_event_notification_absolute: gid={gid}, eid={eid}, tg_id={tg_id}, date={date}, time={time}, message_text={message_text}")
     """Add event notification by exact datetime. Stored as delta in minutes."""
     urow = _require_user(tg_id, request)
@@ -689,7 +709,7 @@ async def add_event_notification_absolute(request: Request, gid: int, eid: int, 
 
 
 @app.post('/group/{gid}/events/{eid}/notifications/{nid}/delete')
-async def delete_event_notification(request: Request, gid: int, eid: int, nid: int, tg_id: int | None = None):
+async def delete_event_notification(request: Request, gid: int, eid: int, nid: int, tg_id: str | None = None):
     urow = _require_user(tg_id, request)
     user_id = urow[0]
     _require_admin(user_id, gid)
@@ -697,7 +717,7 @@ async def delete_event_notification(request: Request, gid: int, eid: int, nid: i
     return RedirectResponse(url=f"/group/{gid}/events/{eid}/settings?tg_id={tg_id}", status_code=303)
 
 @app.post('/group/{gid}/events/{eid}/personal-notifications/add-text')
-async def add_personal_event_notification_text(request: Request, gid: int, eid: int, notification_text: str = Form(...), message_text: str = Form(""), tg_id: int | None = None):
+async def add_personal_event_notification_text(request: Request, gid: int, eid: int, notification_text: str = Form(...), message_text: str = Form(""), tg_id: str | None = None):
     print(f"add_personal_event_notification_text called: gid={gid}, eid={eid}, tg_id={tg_id}")
     print(f"notification_text='{notification_text}', message_text='{message_text}'")
     urow = _require_user(tg_id, request)
@@ -754,7 +774,7 @@ async def add_personal_event_notification_text(request: Request, gid: int, eid: 
     return RedirectResponse(f"/group/{gid}/events/{eid}/settings?ok=personal_notification_added", status_code=303)
 
 @app.post('/group/{gid}/events/{eid}/personal-notifications/add-absolute')
-async def add_personal_event_notification_absolute(request: Request, gid: int, eid: int, date: str = Form(...), time: str = Form(...), message_text: str = Form(None), tg_id: int | None = None):
+async def add_personal_event_notification_absolute(request: Request, gid: int, eid: int, date: str = Form(...), time: str = Form(...), message_text: str = Form(None), tg_id: str | None = None):
     """Add personal event notification by exact datetime. Stored as delta in minutes."""
     urow = _require_user(tg_id, request)
     user_id = urow[0]
@@ -793,14 +813,14 @@ async def add_personal_event_notification_absolute(request: Request, gid: int, e
     return RedirectResponse(f"/group/{gid}/events/{eid}/settings?ok=personal_notification_added", status_code=303)
 
 @app.post('/group/{gid}/events/{eid}/personal-notifications/{nid}/delete')
-async def delete_personal_event_notification(request: Request, gid: int, eid: int, nid: int, tg_id: int | None = None):
+async def delete_personal_event_notification(request: Request, gid: int, eid: int, nid: int, tg_id: str | None = None):
     urow = _require_user(tg_id, request)
     user_id = urow[0]
     PersonalEventNotificationRepo.delete_personal_notification(user_id, nid)
     return RedirectResponse(f"/group/{gid}/events/{eid}/settings?ok=personal_notification_deleted", status_code=303)
 
 @app.post('/group/{gid}/events/{eid}/book')
-async def book_event(request: Request, gid: int, eid: int, tg_id: int | None = None):
+async def book_event(request: Request, gid: int, eid: int, tg_id: str | None = None):
     urow = _require_user(tg_id, request)
     user_id = urow[0]
     
@@ -820,7 +840,7 @@ async def book_event(request: Request, gid: int, eid: int, tg_id: int | None = N
 
 
 @app.get('/group/{gid}/events/{eid}', response_class=HTMLResponse)
-async def event_detail(request: Request, gid: int, eid: int, tg_id: int | None = None):
+async def event_detail(request: Request, gid: int, eid: int, tg_id: str | None = None):
     urow = _require_user(tg_id, request)
     user_id = urow[0]
     role = RoleRepo.get_user_role(user_id, gid)
@@ -834,7 +854,7 @@ async def event_detail(request: Request, gid: int, eid: int, tg_id: int | None =
 
 
 @app.post('/group/{gid}/events/{eid}/book')
-async def book_event(request: Request, gid: int, eid: int, tg_id: int | None = None):
+async def book_event(request: Request, gid: int, eid: int, tg_id: str | None = None):
     urow = _require_user(tg_id, request)
     user_id = urow[0]
     BookingRepo.add_booking(user_id, eid)
@@ -844,7 +864,7 @@ async def book_event(request: Request, gid: int, eid: int, tg_id: int | None = N
 
 
 @app.post('/group/{gid}/events/{eid}/unbook')
-async def unbook_event(request: Request, gid: int, eid: int, tg_id: int | None = None):
+async def unbook_event(request: Request, gid: int, eid: int, tg_id: str | None = None):
     urow = _require_user(tg_id, request)
     user_id = urow[0]
     BookingRepo.remove_booking(user_id, eid)
@@ -852,14 +872,14 @@ async def unbook_event(request: Request, gid: int, eid: int, tg_id: int | None =
 
 
 @app.post('/group/{gid}/display-name/set')
-async def set_display_name(request: Request, gid: int, display_name: str = Form(...), tg_id: int | None = None):
+async def set_display_name(request: Request, gid: int, display_name: str = Form(...), tg_id: str | None = None):
     urow = _require_user(tg_id, request)
     user_id = urow[0]
     DisplayNameRepo.set_display_name(gid, user_id, display_name)
     return RedirectResponse(url=f"/group/{gid}?ok=name_saved", status_code=303)
 
 @app.post('/group/{gid}/settings/member/{uid}/display-name')
-async def update_member_display_name(request: Request, gid: int, uid: int, display_name: str = Form(...), tg_id: int | None = None):
+async def update_member_display_name(request: Request, gid: int, uid: int, display_name: str = Form(...), tg_id: str | None = None):
     urow = _require_user(tg_id, request)
     user_id = urow[0]
     _require_admin(user_id, gid)
@@ -868,7 +888,7 @@ async def update_member_display_name(request: Request, gid: int, uid: int, displ
     return RedirectResponse(f"/group/{gid}/settings?ok=member_name_saved", status_code=303)
 
 @app.post('/group/{gid}/settings/member/{uid}/make-admin')
-async def make_member_admin(request: Request, gid: int, uid: int, tg_id: int | None = None):
+async def make_member_admin(request: Request, gid: int, uid: int, tg_id: str | None = None):
     urow = _require_user(tg_id, request)
     user_id = urow[0]
     _require_admin(user_id, gid)
