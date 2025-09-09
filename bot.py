@@ -1,684 +1,2204 @@
-import logging
 import asyncio
-from pytz import timezone
+import logging
 from aiogram import Bot, Dispatcher, types
-from aiogram.filters import Command
-from aiogram.types import Message, ChatMemberUpdated
+from aiogram.filters import CommandStart
+from aiogram.types import ChatMemberUpdated
 from aiogram.enums import ChatMemberStatus
-from aiogram.utils.keyboard import InlineKeyboardBuilder
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.date import DateTrigger
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+import dateparser
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 
+from services.repositories import UserRepo, GroupRepo, RoleRepo, NotificationRepo, EventRepo, EventNotificationRepo, PersonalEventNotificationRepo, DispatchLogRepo
 from config import BOT_TOKEN, SUPERADMIN_ID
-from group_utils import GroupManager
-from event_utils import EventManager
 
-# Настраиваем бота и логирование
+
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# Инициализируем менеджеры
-group_manager = GroupManager()
-event_manager = EventManager()
+# Роли → русские названия
+ROLE_RU = {
+    'owner': 'Владелец',
+    'admin': 'Админ',
+    'member': 'Участник',
+    'superadmin': 'Суперадмин',
+}
 
-# Планировщик задач
-scheduler = AsyncIOScheduler(timezone=timezone('Europe/Moscow'))
+# Память ожиданий (простая in-memory)
+AWAITING_NOTIF_ADD: dict[int, dict] = {}  # user_id -> {gid, edit_chat_id, edit_message_id, prompt_message_id}
+AWAITING_EVENT_CREATE: dict[int, dict] = {}  # user_id -> {gid, step, name?, time?, edit_chat_id, edit_message_id, prompt_message_id}
+AWAITING_EVENT_EDIT: dict[int, dict] = {}    # user_id -> {eid, gid, mode: 'rename'|'retime', prompt_message_id, edit_chat_id, edit_message_id}
+AWAITING_ADMIN_INPUT: dict[int, dict] = {}  # user_id -> {gid, mode: 'add'|'remove', type?: 'id'|'username'|'phone', edit_chat_id, edit_message_id, prompt_message_id}
+AWAITING_EVENT_NOTIF: dict[int, dict] = {}  # user_id -> {eid, gid, edit_chat_id, edit_message_id, prompt_message_id}
+AWAITING_PERSONAL_NOTIF: dict[int, dict] = {}  # user_id -> {eid, gid, edit_chat_id, edit_message_id, prompt_message_id}
 
-# Получение списка команд
-async def get_commands():
-    return '''/list_events - Полный список событий
-/remind_events - События на месяц, отправляются в рабочий чат
-/add_event ДД.ММ.ГГГГ ЧЧ:ММ Название ГРУППА_ID - Добавить событие
-/remove_event ID - Удалить событие по ID
-/update - Обновить оповещалки после перезагрузки
-/my_groups - Показать группы где вы админ
-/add_admin ГРУППА_ID ПОЛЬЗОВАТЕЛЬ_ID - Добавить админа в группу
-/remove_admin ГРУППА_ID ПОЛЬЗОВАТЕЛЬ_ID - Удалить админа из группы
-/register_group - Зарегистрировать текущую группу в системе
-/add_group CHAT_ID Название - Добавить группу вручную (только суперадмин)
-/help - Напомнить все команды'''
+# Единое сообщение-меню на пользователя
+MENU_STATE: dict[int, dict] = {}  # user_id -> {chat_id, message_id}
 
-# Проверка прав пользователя
-def is_superadmin(user_id: int) -> bool:
-    return user_id == SUPERADMIN_ID
+async def set_menu_message(user_id: int, chat_id: int, text: str, markup: types.InlineKeyboardMarkup | None):
+    state = MENU_STATE.get(user_id)
+    if state and state.get('chat_id') == chat_id:
+        # Пытаемся редактировать текущее меню
+        try:
+            await bot.edit_message_text(text, chat_id=chat_id, message_id=state['message_id'], reply_markup=markup)
+            return
+        except Exception:
+            pass
+    # Если не получилось — отправляем новое и запоминаем
+    msg = await bot.send_message(chat_id, text, reply_markup=markup)
+    MENU_STATE[user_id] = {'chat_id': chat_id, 'message_id': msg.message_id}
 
-def is_group_admin(user_id: int, group_id: int) -> bool:
-    is_admin = group_manager.is_group_admin(group_id, user_id)
-    is_creator = group_manager.is_group_creator(group_id, user_id)
-    print(f"DEBUG: is_group_admin({user_id}, {group_id}): admin={is_admin}, creator={is_creator}")
-    return is_admin or is_creator
-
-def can_manage_group(user_id: int, group_id: int) -> bool:
-    return is_superadmin(user_id) or group_manager.is_group_creator(group_id, user_id)
-
-# Удаление заданий шедулера по ID мероприятия
-async def delete_scheduler(event_id):
+async def safe_answer(callback: types.CallbackQuery) -> None:
     try:
-        scheduler.remove_job(f"{event_id}_3d")
-        scheduler.remove_job(f"{event_id}_2d")
-        scheduler.remove_job(f"{event_id}_2h")
+        await callback.answer()
+    except Exception:
+        # Ignore expired/invalid query id errors
+        pass
+
+async def refresh_personal_notifications_view(message: types.Message, event_id: int, group_id: int, user_id: int):
+    """Refresh the personal notifications view for an event."""
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    
+    # Get event info
+    ev = EventRepo.get_by_id(event_id)
+    if not ev:
+        await message.answer("Мероприятие не найдено")
+        return
+    
+    _id, name, time_str, group_id, resp_uid = ev
+    
+    # Get personal notifications
+    notifs = PersonalEventNotificationRepo.list_by_user_and_event(user_id, event_id)
+    
+    kb = InlineKeyboardBuilder()
+    lines = [f"📱 Мои напоминания для \"{name}\""]
+    lines.append(f"Время: {format_event_time_display(time_str)}")
+    lines.append("")
+    
+    if notifs:
+        lines.append("Настроенные напоминания:")
+        for notif_id, time_before, time_unit, message_text in notifs:
+            time_display = format_duration_ru(time_before, time_unit)
+            notification_time = calculate_notification_time(time_str, time_before, time_unit)
+            lines.append(f"• {time_display} - Через {time_display} начало мероприятия")
+            lines.append(f"  📅 Отправится: {notification_time}")
+            kb.row(types.InlineKeyboardButton(text=f"❌ {time_display}", callback_data=f"evt_personal_notif_del:{notif_id}:{event_id}:{group_id}"))
+    else:
+        lines.append("Нет настроенных напоминаний")
+    
+    lines.append("")
+    lines.append("Добавить напоминание:")
+    
+    # Add quick buttons
+    kb.row(
+        types.InlineKeyboardButton(text="1 день", callback_data=f"evt_personal_notif_add:{event_id}:{group_id}:1:days"),
+        types.InlineKeyboardButton(text="2 дня", callback_data=f"evt_personal_notif_add:{event_id}:{group_id}:2:days"),
+        types.InlineKeyboardButton(text="3 дня", callback_data=f"evt_personal_notif_add:{event_id}:{group_id}:3:days")
+    )
+    kb.row(
+        types.InlineKeyboardButton(text="1 час", callback_data=f"evt_personal_notif_add:{event_id}:{group_id}:1:hours"),
+        types.InlineKeyboardButton(text="2 часа", callback_data=f"evt_personal_notif_add:{event_id}:{group_id}:2:hours"),
+        types.InlineKeyboardButton(text="30 мин", callback_data=f"evt_personal_notif_add:{event_id}:{group_id}:30:minutes")
+    )
+    kb.row(types.InlineKeyboardButton(text="Произвольное", callback_data=f"evt_personal_notif_add_free:{event_id}:{group_id}"))
+    kb.row(types.InlineKeyboardButton(text="⬅️ Назад", callback_data=f"evt_open:{event_id}:{group_id}"))
+    
+    text = "\n".join(lines)
+    await bot.edit_message_text(text, chat_id=message.chat.id, message_id=message.message_id, reply_markup=kb.as_markup())
+
+async def refresh_event_notifications_view(message: types.Message, event_id: int, group_id: int, user_id: int):
+    """Refresh the event notifications view."""
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    
+    # Get event info
+    ev = EventRepo.get_by_id(event_id)
+    if not ev:
+        await message.answer("Мероприятие не найдено")
+        return
+    
+    _id, name, time_str, group_id, resp_uid = ev
+    
+    # Get event notifications
+    notifs = EventNotificationRepo.list_by_event(event_id)
+    
+    kb = InlineKeyboardBuilder()
+    lines = [f"🔔 Групповые оповещения для \"{name}\""]
+    lines.append(f"Время: {format_event_time_display(time_str)}")
+    lines.append("")
+    
+    if notifs:
+        lines.append("Настроенные оповещения:")
+        for notif_id, time_before, time_unit, message_text in notifs:
+            time_display = format_duration_ru(time_before, time_unit)
+            notification_time = calculate_notification_time(time_str, time_before, time_unit)
+            lines.append(f"• {time_display} - Через {time_display} начало мероприятия")
+            lines.append(f"  📅 Отправится: {notification_time}")
+            # Only show delete button if user can edit
+            if can_edit_event_notifications(user_id, event_id):
+                kb.row(types.InlineKeyboardButton(text=f"❌ {time_display}", callback_data=f"evt_notif_del:{notif_id}:{event_id}:{group_id}"))
+    else:
+        lines.append("Нет настроенных оповещений")
+    
+    # Only show add buttons if user can edit
+    if can_edit_event_notifications(user_id, event_id):
+        lines.append("")
+        lines.append("Добавить оповещение:")
+        
+        # Add quick buttons
+        kb.row(
+            types.InlineKeyboardButton(text="1 день", callback_data=f"evt_notif_add:{event_id}:{group_id}:1:days"),
+            types.InlineKeyboardButton(text="2 дня", callback_data=f"evt_notif_add:{event_id}:{group_id}:2:days"),
+            types.InlineKeyboardButton(text="3 дня", callback_data=f"evt_notif_add:{event_id}:{group_id}:3:days")
+        )
+        kb.row(
+            types.InlineKeyboardButton(text="1 час", callback_data=f"evt_notif_add:{event_id}:{group_id}:1:hours"),
+            types.InlineKeyboardButton(text="2 часа", callback_data=f"evt_notif_add:{event_id}:{group_id}:2:hours"),
+            types.InlineKeyboardButton(text="30 мин", callback_data=f"evt_notif_add:{event_id}:{group_id}:30:minutes")
+        )
+        kb.row(types.InlineKeyboardButton(text="Произвольное", callback_data=f"evt_notif_add_free:{event_id}:{group_id}"))
+    
+    kb.row(types.InlineKeyboardButton(text="⬅️ Назад", callback_data=f"evt_open:{event_id}:{group_id}"))
+    
+    text = "\n".join(lines)
+    await bot.edit_message_text(text, chat_id=message.chat.id, message_id=message.message_id, reply_markup=kb.as_markup())
+
+# Variants that refresh by explicit chat/message ids to avoid constructing Message objects
+async def refresh_personal_notifications_view_ids(edit_chat_id: int, edit_message_id: int, event_id: int, group_id: int, user_id: int):
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    ev = EventRepo.get_by_id(event_id)
+    if not ev:
+        return
+    _id, name, time_str, group_id, resp_uid = ev
+    notifs = PersonalEventNotificationRepo.list_by_user_and_event(user_id, event_id)
+    kb = InlineKeyboardBuilder()
+    lines = [f"📱 Личные оповещения для \"{name}\""]
+    lines.append(f"Время: {format_event_time_display(time_str)}")
+    lines.append("")
+    if notifs:
+        lines.append("Настроенные напоминания:")
+        for notif_id, time_before, time_unit, message_text in notifs:
+            time_display = format_duration_ru(time_before, time_unit)
+            notification_time = calculate_notification_time(time_str, time_before, time_unit)
+            lines.append(f"• {time_display} - Через {time_display} начало мероприятия")
+            lines.append(f"  📅 Отправится: {notification_time}")
+            kb.row(types.InlineKeyboardButton(text=f"❌ {time_display}", callback_data=f"evt_personal_notif_del:{notif_id}:{event_id}:{group_id}"))
+    else:
+        lines.append("Нет настроенных напоминаний")
+    lines.append("")
+    lines.append("Добавить напоминание:")
+    kb.row(
+        types.InlineKeyboardButton(text="1 день", callback_data=f"evt_personal_notif_add:{event_id}:{group_id}:1:days"),
+        types.InlineKeyboardButton(text="2 дня", callback_data=f"evt_personal_notif_add:{event_id}:{group_id}:2:days"),
+        types.InlineKeyboardButton(text="3 дня", callback_data=f"evt_personal_notif_add:{event_id}:{group_id}:3:days")
+    )
+    kb.row(
+        types.InlineKeyboardButton(text="1 час", callback_data=f"evt_personal_notif_add:{event_id}:{group_id}:1:hours"),
+        types.InlineKeyboardButton(text="2 часа", callback_data=f"evt_personal_notif_add:{event_id}:{group_id}:2:hours"),
+        types.InlineKeyboardButton(text="30 мин", callback_data=f"evt_personal_notif_add:{event_id}:{group_id}:30:minutes")
+    )
+    kb.row(types.InlineKeyboardButton(text="Произвольное", callback_data=f"evt_personal_notif_add_free:{event_id}:{group_id}"))
+    kb.row(types.InlineKeyboardButton(text="⬅️ Назад", callback_data=f"evt_open:{event_id}:{group_id}"))
+    text = "\n".join(lines)
+    await bot.edit_message_text(text, chat_id=edit_chat_id, message_id=edit_message_id, reply_markup=kb.as_markup())
+
+async def refresh_event_notifications_view_ids(edit_chat_id: int, edit_message_id: int, event_id: int, group_id: int, user_id: int):
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    ev = EventRepo.get_by_id(event_id)
+    if not ev:
+        return
+    _id, name, time_str, group_id, resp_uid = ev
+    notifs = EventNotificationRepo.list_by_event(event_id)
+    kb = InlineKeyboardBuilder()
+    lines = [f"🔔 Групповые оповещения для \"{name}\""]
+    lines.append(f"Время: {format_event_time_display(time_str)}")
+    lines.append("")
+    if notifs:
+        lines.append("Настроенные оповещения:")
+        for notif_id, time_before, time_unit, message_text in notifs:
+            time_display = format_duration_ru(time_before, time_unit)
+            notification_time = calculate_notification_time(time_str, time_before, time_unit)
+            lines.append(f"• {time_display} - Через {time_display} начало мероприятия")
+            lines.append(f"  📅 Отправится: {notification_time}")
+            if can_edit_event_notifications(user_id, event_id):
+                kb.row(types.InlineKeyboardButton(text=f"❌ {time_display}", callback_data=f"evt_notif_del:{notif_id}:{event_id}:{group_id}"))
+    else:
+        lines.append("Нет настроенных оповещений")
+    if can_edit_event_notifications(user_id, event_id):
+        lines.append("")
+        lines.append("Добавить оповещение:")
+        kb.row(
+            types.InlineKeyboardButton(text="1 день", callback_data=f"evt_notif_add:{event_id}:{group_id}:1:days"),
+            types.InlineKeyboardButton(text="2 дня", callback_data=f"evt_notif_add:{event_id}:{group_id}:2:days"),
+            types.InlineKeyboardButton(text="3 дня", callback_data=f"evt_notif_add:{event_id}:{group_id}:3:days")
+        )
+        kb.row(
+            types.InlineKeyboardButton(text="1 час", callback_data=f"evt_notif_add:{event_id}:{group_id}:1:hours"),
+            types.InlineKeyboardButton(text="2 часа", callback_data=f"evt_notif_add:{event_id}:{group_id}:2:hours"),
+            types.InlineKeyboardButton(text="30 мин", callback_data=f"evt_notif_add:{event_id}:{group_id}:30:minutes")
+        )
+        kb.row(types.InlineKeyboardButton(text="Произвольное", callback_data=f"evt_notif_add_free:{event_id}:{group_id}"))
+    kb.row(types.InlineKeyboardButton(text="⬅️ Назад", callback_data=f"evt_open:{event_id}:{group_id}"))
+    text = "\n".join(lines)
+    await bot.edit_message_text(text, chat_id=edit_chat_id, message_id=edit_message_id, reply_markup=kb.as_markup())
+
+# Утилиты форматирования и парсинга сроков
+def calculate_notification_time(event_time_str: str, time_before: int, time_unit: str) -> str:
+    """Calculate when a notification will be sent based on event time and notification settings."""
+    from datetime import datetime, timedelta
+    
+    try:
+        # Parse event time
+        event_dt = datetime.strptime(event_time_str, '%Y-%m-%d %H:%M:%S')
+        
+        # Calculate notification time (BEFORE the event)
+        if time_unit == 'minutes':
+            notification_dt = event_dt - timedelta(minutes=time_before)
+        elif time_unit == 'hours':
+            notification_dt = event_dt - timedelta(hours=time_before)
+        elif time_unit == 'days':
+            notification_dt = event_dt - timedelta(days=time_before)
+        elif time_unit == 'weeks':
+            notification_dt = event_dt - timedelta(weeks=time_before)
+        elif time_unit == 'months':
+            # Approximate months as 30 days
+            notification_dt = event_dt - timedelta(days=time_before * 30)
+        else:
+            return "Неизвестная единица времени"
+        
+        # Debug info
+        print(f"DEBUG: Event time: {event_dt}, Notification time: {notification_dt}, Time before: {time_before} {time_unit}")
+        
+        # Format the result
+        return notification_dt.strftime('%d.%m.%Y %H:%M')
+    except Exception as e:
+        return f"Ошибка: {str(e)}"
+
+def format_duration_ru(amount: int, unit: str) -> str:
+    # Для minutes попытаемся разложить на составные
+    if unit == 'minutes':
+        total = amount
+        parts = []
+        m_in_hour = 60
+        m_in_day = 60 * 24
+        m_in_week = m_in_day * 7
+        m_in_month = m_in_day * 30
+        months = total // m_in_month
+        total %= m_in_month
+        weeks = total // m_in_week
+        total %= m_in_week
+        days = total // m_in_day
+        total %= m_in_day
+        hours = total // m_in_hour
+        minutes = total % m_in_hour
+        if months:
+            parts.append(f"{months} мес")
+        if weeks:
+            parts.append(f"{weeks} нед")
+        if days:
+            parts.append(f"{days} дн")
+        if hours:
+            parts.append(f"{hours} ч")
+        if minutes:
+            parts.append(f"{minutes} мин")
+        return ' '.join(parts) if parts else '0 мин'
+    names = {
+        'months': 'мес',
+        'weeks': 'нед',
+        'days': 'дн',
+        'hours': 'ч',
+        'minutes': 'мин',
+    }
+    return f"{amount} {names.get(unit, unit)}"
+
+def parse_duration_ru(text: str) -> int:
+    """Парсит русское описание длительности и возвращает сумму в минутах."""
+    import re
+    tokens = re.split(r"[\s,]+", text.lower())
+    tokens = [t for t in tokens if t]
+    if not tokens:
+        return 0
+    units_map = {
+        'месяц': 'months', 'месяца': 'months', 'месяцев': 'months', 'мес': 'months',
+        'неделя': 'weeks', 'недели': 'weeks', 'недель': 'weeks', 'нед': 'weeks', 'неделями': 'weeks',
+        'день': 'days', 'дня': 'days', 'дней': 'days', 'дн': 'days', 'днями': 'days',
+        'час': 'hours', 'часа': 'hours', 'часов': 'hours', 'ч': 'hours', 'часами': 'hours',
+        'минута': 'minutes', 'минуты': 'minutes', 'минут': 'minutes', 'мин': 'minutes', 'минутами': 'minutes',
+    }
+    m_in = {
+        'months': 30 * 24 * 60,
+        'weeks': 7 * 24 * 60,
+        'days': 24 * 60,
+        'hours': 60,
+        'minutes': 1,
+    }
+    total = 0
+    i = 0
+    while i < len(tokens):
+        try:
+            num = int(tokens[i])
+            i += 1
+            if i < len(tokens):
+                unit_token = tokens[i]
+                unit = units_map.get(unit_token)
+                if unit:
+                    total += num * m_in[unit]
+                    i += 1
+                else:
+                    # если не распознали единицу, считаем минутами
+                    total += num
+            else:
+                total += num
+        except ValueError:
+            # пропускаем лишние слова
+            i += 1
+    return total
+
+
+def parse_ru_datetime(text: str) -> datetime | None:
+    """Парсит русскоязычное описание даты/времени в datetime (локальное время)."""
+    dt = dateparser.parse(
+        text,
+        languages=["ru"],
+        settings={
+            'PREFER_DATES_FROM': 'future',
+            'DATE_ORDER': 'DMY',
+            'TIMEZONE': 'UTC',
+            'RETURN_AS_TIMEZONE_AWARE': False,
+        },
+    )
+    return dt
+
+def format_event_time_display(time_str: str) -> str:
+    """Пытается привести время к виду ДД.ММ.ГГГГ ЧЧ:ММ:СС для отображения."""
+    # Попытка распарсить ISO "YYYY-MM-DD HH:MM:SS" или другие
+    try_formats = ["%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%d.%m.%Y %H:%M:%S", "%d.%m.%Y %H:%M"]
+    for fmt in try_formats:
+        try:
+            dt = datetime.strptime(time_str, fmt)
+            return dt.strftime("%d.%m.%Y %H:%M:%S")
+        except Exception:
+            pass
+    # Как fallback попробуем dateparser
+    dt2 = dateparser.parse(time_str, languages=["ru"], settings={'DATE_ORDER': 'DMY'})
+    if dt2:
+        return dt2.strftime("%d.%m.%Y %H:%M:%S")
+    return time_str
+
+def can_edit_event_notifications(user_id: int, event_id: int) -> bool:
+    """Owner/admin/superadmin only (responsible no longer allowed)."""
+    if user_id == SUPERADMIN_ID:
         return True
-    except:
-        print(f'Не удалось удалить задания на оповещения по мероприятию {event_id}')
+    ev = EventRepo.get_by_id(event_id)
+    if not ev:
         return False
+    _id, _name, _time_str, group_id, _resp_uid = ev
+    role = RoleRepo.get_user_role(user_id, group_id)
+    return role in ['owner', 'admin']
 
-# Добавление заданий шедулера по ID и времени мероприятия
-async def add_scheduler(event_id, event_time, group_id):
-    try:
-        scheduler.add_job(send_reminder, DateTrigger(run_date=event_time - timedelta(days=3)), 
-                         args=[event_id, "3 дня", group_id], id=f"{event_id}_3d")
-        scheduler.add_job(send_reminder, DateTrigger(run_date=event_time - timedelta(days=2)), 
-                         args=[event_id, "2 дня", group_id], id=f"{event_id}_2d")
-        scheduler.add_job(send_reminder, DateTrigger(run_date=event_time - timedelta(hours=2)), 
-                         args=[event_id, "2 часа", group_id], id=f"{event_id}_2h")
-    except:
-        print(f'Не удалось добавить задания на оповещения по мероприятию {event_id}')
-        return False
 
-# Обновление оповещений
-async def update_notifications():
-    try:
-        # Запрашиваем предстоящие мероприятия из базы данных
-        events = event_manager.get_all_events()
-
-        if not events:
-            return 'Не найдено мероприятий для обновления оповещений.'
-
-        # Удаляем по каждому мероприятию оповещения и создаем новые
-        for event_id, name, time, responsible, group_id in events:
-            time_formatted = datetime.strptime(time, '%Y-%m-%d %H:%M:%S')
-
-            # Удаляем все задания, связанные с мероприятием
-            await delete_scheduler(event_id)
-            
-            # Создаем новые задания по мероприятиям
-            await add_scheduler(event_id, time_formatted, group_id)
-
-        mess_res = 'Задания по всем мероприятиям успешно обновлены.'
-    except Exception as e:
-        mess_res = f'Не удалось обновить задания по мероприятиям: {e}'
-    return mess_res
-
-# Обработчик добавления бота в группу
-@dp.chat_member()
+@dp.my_chat_member()
 async def on_chat_member_update(event: ChatMemberUpdated):
-    print(f"DEBUG: Chat member update event received: {event.new_chat_member.status}")
-    print(f"DEBUG: Chat ID: {event.chat.id}, Title: {event.chat.title}")
-    print(f"DEBUG: From user ID: {event.from_user.id}")
-    print(f"DEBUG: Bot user ID: {event.new_chat_member.user.id}")
-    
-    # Проверяем, что это событие касается нашего бота
+    logging.info(f"my_chat_member update received: chat={event.chat.id}, status={event.new_chat_member.status}, actor={getattr(event.from_user,'id',None)}")
+    # Only react when the bot is added to a group
     if event.new_chat_member.user.id != bot.id:
-        print(f"DEBUG: Event not for our bot, ignoring")
         return
-    
-    if event.new_chat_member.status == ChatMemberStatus.MEMBER:
-        print(f"DEBUG: Bot added to group: {event.chat.title}")
-        # Бот добавлен в группу
+
+    if event.new_chat_member.status in (ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR):
+        logging.info("Bot added to a chat (member/admin), proceeding with registration...")
         chat_id = str(event.chat.id)
-        title = event.chat.title or "Неизвестная группа"
-        user_id = event.from_user.id
-        
-        # Проверяем, существует ли группа
-        existing_group = group_manager.get_group_by_chat_id(chat_id)
-        print(f"DEBUG: Existing group check: {existing_group}")
-        
-        if not existing_group:
-            print(f"DEBUG: Creating new group: {title}")
-            # Создаем новую группу
-            group_id = group_manager.create_group(chat_id, title, user_id)
-            print(f"DEBUG: Group created with ID: {group_id}")
-            # Добавляем пользователя как админа
-            group_manager.add_group_admin(group_id, user_id)
-            print(f"DEBUG: User {user_id} added as admin to group {group_id}")
-            
-            await bot.send_message(
-                event.chat.id,
-                f"Группа '{title}' успешно добавлена в систему!\n"
-                f"ID группы: {group_id}\n"
-                f"Создатель: @{event.from_user.username or event.from_user.first_name}"
+        title = event.chat.title or 'Без названия'
+        adder = event.from_user
+
+        # Upsert the user who added the bot (if known)
+        owner_user_id = None
+        if adder is not None:
+            owner_user_id = UserRepo.upsert_user(
+                telegram_id=adder.id,
+                username=adder.username,
+                phone=None,
+                first_name=adder.first_name,
+                last_name=adder.last_name,
             )
+
+        # Ensure group exists
+        existing = GroupRepo.get_by_chat_id(chat_id)
+        if not existing:
+            group_id = GroupRepo.create(chat_id, title, owner_user_id)
+            # If we know adder, grant owner role
+            if owner_user_id is not None:
+                RoleRepo.add_role(owner_user_id, group_id, 'owner', confirmed=True)
+            # Add superadmin to the group as superadmin
+            try:
+                sa_row = UserRepo.get_by_telegram_id(SUPERADMIN_ID)
+                if sa_row:
+                    RoleRepo.add_role(sa_row[0], group_id, 'superadmin', confirmed=True)
+            except Exception:
+                pass
+            # Default notifications
+            NotificationRepo.ensure_defaults(group_id)
+            await bot.send_message(event.chat.id, "Группа зарегистрирована. Настройки уведомлений по умолчанию созданы.")
         else:
-            print(f"DEBUG: Group already exists: {existing_group}")
-    else:
-        print(f"DEBUG: Bot status changed to: {event.new_chat_member.status}")
+            logging.info("Group already registered, skipping")
 
-# Команда start
-@dp.message(Command("start"))
-async def start_mess(message: Message):
-    user_id = message.from_user.id
-    print(f"DEBUG: Start command from user {user_id}")
-    print(f"DEBUG: Is superadmin: {is_superadmin(user_id)}")
-    
-    user_groups = group_manager.get_user_admin_groups(user_id)
-    print(f"DEBUG: User admin groups: {user_groups}")
-    
-    if is_superadmin(user_id) or user_groups:
-        await message.answer("Привет! Список команд:\n"+str(await get_commands()))
-    else:
-        await message.answer("Привет! У вас нет прав администратора.")
 
-# Команда help
-@dp.message(Command("help"))
-async def help_mess(message: Message):
-    if is_superadmin(message.from_user.id) or group_manager.get_user_admin_groups(message.from_user.id):
-        await message.answer(str(await get_commands()))
-    else:
-        await message.answer("У вас нет прав для просмотра команд.")
-
-# Команда my_groups
-@dp.message(Command("my_groups"))
-async def my_groups(message: Message):
-    user_id = message.from_user.id
-    if is_superadmin(user_id):
-        # Суперадмин видит все группы
-        groups = group_manager.get_all_groups()
-        if groups:
-            response = "Все группы в системе:\n"
-            for group_id, title, created_by in groups:
-                response += f"ID: {group_id} | {title}\n"
-        else:
-            response = "В системе нет групп."
-    else:
-        # Обычный пользователь видит только свои группы
-        groups = group_manager.get_user_admin_groups(user_id)
-        if groups:
-            response = "Группы где вы являетесь админом:\n"
-            for group_id, title in groups:
-                response += f"ID: {group_id} | {title}\n"
-        else:
-            response = "Вы не являетесь админом ни в одной группе."
-    
-    await message.answer(response)
-
-# Команда add_admin
-@dp.message(Command("add_admin"))
-async def add_admin(message: Message):
-    user_id = message.from_user.id
-    if not (is_superadmin(user_id) or group_manager.get_user_admin_groups(user_id)):
-        await message.answer("У вас нет прав для добавления админов.")
-        return
-    
-    try:
-        parts = message.text.split()
-        if len(parts) != 3:
-            await message.answer("Использование: /add_admin ГРУППА_ID ПОЛЬЗОВАТЕЛЬ_ID")
-            return
-        
-        group_id = int(parts[1])
-        new_admin_id = int(parts[2])
-        
-        # Проверяем права
-        if not (is_superadmin(user_id) or can_manage_group(user_id, group_id)):
-            await message.answer("У вас нет прав для управления этой группой.")
-            return
-        
-        # Проверяем существование группы
-        group = group_manager.get_group_by_id(group_id)
-        if not group:
-            await message.answer("Группа с таким ID не найдена.")
-            return
-        
-        # Добавляем админа
-        if group_manager.add_group_admin(group_id, new_admin_id):
-            await message.answer(f"Пользователь {new_admin_id} успешно добавлен как админ в группу '{group[2]}'")
-        else:
-            await message.answer("Пользователь уже является админом этой группы.")
-            
-    except (IndexError, ValueError):
-        await message.answer("Использование: /add_admin ГРУППА_ID ПОЛЬЗОВАТЕЛЬ_ID")
-
-# Команда для регистрации группы (работает только в группах)
-@dp.message(Command("register_group"))
-async def register_group(message: Message):
-    # Проверяем, что команда отправлена из группы
-    if message.chat.type not in ['group', 'supergroup']:
-        await message.answer("Эта команда работает только в группах.")
-        return
-    
-    user_id = message.from_user.id
-    chat_id = str(message.chat.id)
-    title = message.chat.title or "Неизвестная группа"
-    
-    print(f"DEBUG: register_group called by user {user_id} in chat {chat_id}")
-    
-    # Проверяем, существует ли группа
-    existing_group = group_manager.get_group_by_chat_id(chat_id)
-    if existing_group:
-        await message.answer(f"Группа '{title}' уже зарегистрирована в системе!\nID группы: {existing_group[0]}")
-        return
-    
-    # Создаем новую группу
-    group_id = group_manager.create_group(chat_id, title, user_id)
-    print(f"DEBUG: Group created with ID: {group_id}")
-    
-    # Добавляем пользователя как админа
-    group_manager.add_group_admin(group_id, user_id)
-    print(f"DEBUG: User {user_id} added as admin to group {group_id}")
-    
-    await message.answer(
-        f"Группа '{title}' успешно зарегистрирована в системе!\n"
-        f"ID группы: {group_id}\n"
-        f"Создатель: @{message.from_user.username or message.from_user.first_name}\n\n"
-        f"Теперь вы можете управлять мероприятиями в этой группе!"
+@dp.message(CommandStart())
+async def start(message: types.Message):
+    user = message.from_user
+    user_id = UserRepo.upsert_user(
+        telegram_id=user.id,
+        username=user.username,
+        phone=None,
+        first_name=user.first_name,
+        last_name=user.last_name,
     )
 
-# Команда для ручного добавления группы (для отладки)
-@dp.message(Command("add_group"))
-async def add_group_manual(message: Message):
-    user_id = message.from_user.id
-    if not is_superadmin(user_id):
-        await message.answer("Только суперадмин может добавлять группы вручную.")
-        return
-    
-    try:
-        parts = message.text.split(maxsplit=2)
-        if len(parts) != 3:
-            await message.answer("Использование: /add_group CHAT_ID Название_группы")
-            return
-        
-        chat_id = parts[1]
-        title = parts[2]
-        
-        # Проверяем, существует ли группа
-        existing_group = group_manager.get_group_by_chat_id(chat_id)
-        if existing_group:
-            await message.answer(f"Группа с chat_id {chat_id} уже существует.")
-            return
-        
-        # Создаем новую группу
-        group_id = group_manager.create_group(chat_id, title, user_id)
-        # Добавляем пользователя как админа
-        group_manager.add_group_admin(group_id, user_id)
-        
-        await message.answer(f"Группа '{title}' успешно добавлена в систему!\nID группы: {group_id}")
-        
-    except Exception as e:
-        await message.answer(f"Ошибка при добавлении группы: {e}")
-
-# Команда remove_admin
-@dp.message(Command("remove_admin"))
-async def remove_admin(message: Message):
-    user_id = message.from_user.id
-    if not (is_superadmin(user_id) or group_manager.get_user_admin_groups(user_id)):
-        await message.answer("У вас нет прав для удаления админов.")
-        return
-    
-    try:
-        parts = message.text.split()
-        if len(parts) != 3:
-            await message.answer("Использование: /remove_admin ГРУППА_ID ПОЛЬЗОВАТЕЛЬ_ID")
-            return
-        
-        group_id = int(parts[1])
-        admin_id = int(parts[2])
-        
-        # Проверяем права
-        if not (is_superadmin(user_id) or can_manage_group(user_id, group_id)):
-            await message.answer("У вас нет прав для управления этой группой.")
-            return
-        
-        # Проверяем существование группы
-        group = group_manager.get_group_by_id(group_id)
-        if not group:
-            await message.answer("Группа с таким ID не найдена.")
-            return
-        
-        # Нельзя удалить создателя группы
-        if group_manager.is_group_creator(group_id, admin_id):
-            await message.answer("Нельзя удалить создателя группы.")
-            return
-        
-        # Удаляем админа
-        if group_manager.remove_group_admin(group_id, admin_id):
-            await message.answer(f"Пользователь {admin_id} успешно удален из админов группы '{group[2]}'")
-        else:
-            await message.answer("Пользователь не является админом этой группы.")
-            
-    except (IndexError, ValueError):
-        await message.answer("Использование: /remove_admin ГРУППА_ID ПОЛЬЗОВАТЕЛЬ_ID")
-
-# Добавление события
-@dp.message(Command("add_event"))
-async def add_event(message: Message):
-    user_id = message.from_user.id
-    if not (is_superadmin(user_id) or group_manager.get_user_admin_groups(user_id)):
-        await message.answer("У вас нет прав для добавления мероприятий.")
-        return
-    
-    try:
-        event_data = message.text.split()[1:]
-        if len(event_data) < 3:
-            await message.answer("Использование: /add_event ДД.ММ.ГГГГ ЧЧ:ММ Название ГРУППА_ID")
-            return
-        
-        date_time_str = ' '.join(event_data[:2])
-        event_name = ' '.join(event_data[2:-1])
-        group_id = int(event_data[-1])
-        
-        event_time = datetime.strptime(date_time_str, '%d.%m.%Y %H:%M')
-
-        if event_time < datetime.now():
-            await message.answer("Нельзя добавить мероприятие в прошлом.")
-            return
-
-        # Проверяем права на группу
-        if not (is_superadmin(user_id) or is_group_admin(user_id, group_id)):
-            await message.answer("У вас нет прав для добавления мероприятий в эту группу.")
-            return
-
-        # Проверяем существование группы
-        group = group_manager.get_group_by_id(group_id)
-        if not group:
-            await message.answer("Группа с таким ID не найдена.")
-            return
-
-        event_id = event_manager.create_event(event_name, event_time, group_id)
-
-        # Планируем напоминания
-        await add_scheduler(event_id, event_time, group_id)
-
-        await message.answer(f"Мероприятие '{event_name}' добавлено в группу '{group[2]}' на {event_time.strftime('%d.%m.%Y %H:%M')}")
-
-    except (IndexError, ValueError) as e:
-        await message.answer(f"Ошибка: {e}\nИспользование: /add_event ДД.ММ.ГГГГ ЧЧ:ММ Название ГРУППА_ID")
-
-# Удаление события
-@dp.message(Command("remove_event"))
-async def remove_event(message: Message):
-    user_id = message.from_user.id
-    if not (is_superadmin(user_id) or group_manager.get_user_admin_groups(user_id)):
-        await message.answer("У вас нет прав для удаления мероприятий.")
-        return
-    
-    try:
-        event_id = int(message.text.split()[1])
-        
-        # Получаем информацию о мероприятии
-        event = event_manager.get_event(event_id)
-        if not event:
-            await message.answer("Мероприятие с таким ID не найдено.")
-            return
-        
-        # Проверяем права на группу
-        if not (is_superadmin(user_id) or is_group_admin(user_id, event[4])):
-            await message.answer("У вас нет прав для удаления мероприятий из этой группы.")
-            return
-        
-        if event_manager.delete_event(event_id):
-            # Удаляем все задания, связанные с мероприятием
-            await delete_scheduler(event_id)
-            await message.answer(f"Мероприятие с ID {event_id} удалено.")
-        else:
-            await message.answer("Не удалось удалить мероприятие.")
-            
-    except (IndexError, ValueError):
-        await message.answer("Использование: /remove_event ID")
-
-# Обновление всех оповещений
-@dp.message(Command("update"))
-async def update_notifications_cmd(message: Message):
-    user_id = message.from_user.id
-    if not (is_superadmin(user_id) or group_manager.get_user_admin_groups(message.from_user.id)):
-        await message.answer("У вас нет прав для обновления оповещений.")
-        return
-    
-    mess_res = await update_notifications()
-    await message.answer(mess_res)
-
-# Список мероприятий
-@dp.message(Command("remind_events"))
-async def remind_upcoming_events(message: Message):
-    user_id = message.from_user.id
-    
-    # Определяем группу
-    group_id = None
-    
-    if message.chat.type in ['group', 'supergroup']:
-        # Сообщение из группы - проверяем, указан ли ID группы
-        try:
-            parts = message.text.split()
-            if len(parts) >= 2:
-                # Если указан ID группы, используем его
-                group_id = int(parts[1])
-            else:
-                # Иначе используем текущую группу
-                group = group_manager.get_group_by_chat_id(str(message.chat.id))
-                if not group:
-                    await message.answer("Эта группа не зарегистрирована в системе.")
-                    return
-                group_id = group[0]  # ID группы в системе
-        except (IndexError, ValueError):
-            # Если не удалось распарсить ID, используем текущую группу
-            group = group_manager.get_group_by_chat_id(str(message.chat.id))
-            if not group:
-                await message.answer("Эта группа не зарегистрирована в системе.")
-                return
-            group_id = group[0]  # ID группы в системе
+    # Сформировать корневое меню (единое сообщение)
+    groups = GroupRepo.list_user_groups_with_roles(user_id)
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    kb = InlineKeyboardBuilder()
+    lines = []
+    if user.id == SUPERADMIN_ID:
+        lines.append(f"Роль: {ROLE_RU['superadmin']}")
+    if not groups:
+        lines.append("У вас пока нет групп. Добавьте бота в группу или дождитесь подтверждения доступа.")
     else:
-        # Личное сообщение - проверяем, указан ли ID группы
-        try:
-            parts = message.text.split()
-            if len(parts) >= 2:
-                group_id = int(parts[1])
-            else:
-                await message.answer("Пожалуйста, укажите ID группы для просмотра мероприятий.\n"
-                                   "Использование: /remind_events ГРУППА_ID")
-                return
-        except (IndexError, ValueError):
-            await message.answer("Пожалуйста, укажите корректный ID группы.\n"
-                               "Использование: /remind_events ГРУППА_ID")
-            return
-    
-    # Проверяем существование группы
-    group = group_manager.get_group_by_id(group_id)
-    if not group:
-        await message.answer(f"Группа с ID {group_id} не найдена в системе.")
-        return
-    
-    # Проверяем права
-    if not (is_superadmin(user_id) or is_group_admin(user_id, group_id)):
-        await message.answer("У вас нет прав для просмотра мероприятий этой группы.")
-        return
-    
-    events = event_manager.get_upcoming_events(group_id, 30)
+        lines.append("Ваши группы:")
+        for gid, title, role in groups:
+            role_ru = ROLE_RU.get(role, role)
+            kb.button(text=f"{title} (роль: {role_ru})", callback_data=f"grp_menu:{gid}")
+        kb.adjust(1)
+    await set_menu_message(user_id, message.chat.id, "\n".join(lines), kb.as_markup())
 
+    # Check if user matches any pending admins and confirm in those groups
+    try:
+        group_ids = RoleRepo.find_groups_for_pending(telegram_id=user.id, username=user.username, phone=None)
+        for gid in group_ids:
+            RoleRepo.confirm_admin_if_pending(user_id, gid)
+        if group_ids:
+            await message.answer(f"Ваш доступ админа подтвержден в группах: {', '.join(map(str, group_ids))}")
+        else:
+            # If nothing confirmed via id/username, suggest sharing phone number only if there are pending by phone
+            if RoleRepo.has_any_pending_by_phone():
+                kb = ReplyKeyboardMarkup(
+                    keyboard=[[KeyboardButton(text="Поделиться телефоном", request_contact=True)]],
+                    resize_keyboard=True,
+                    one_time_keyboard=True,
+                    selective=True,
+                )
+                await message.answer(
+                    "Если вас добавляли администратором по телефону — поделитесь номером для подтверждения доступа.",
+                    reply_markup=kb,
+                )
+    except Exception as e:
+        logging.exception(f"Failed to confirm pending admin: {e}")
+
+
+# Обработчики кнопок
+@dp.callback_query(lambda c: c.data and c.data.startswith('grp_events:'))
+async def cb_group_events(callback: types.CallbackQuery):
+    print(f"DEBUG: cb_group_events called with data: {callback.data}")
+    gid = int(callback.data.split(':', 1)[1])
+    await safe_answer(callback)
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    # Resolve current internal user
+    urow = UserRepo.get_by_telegram_id(callback.from_user.id)
+    internal_user_id = urow[0] if urow else None
+    events = EventRepo.list_by_group(gid)
+    kb = InlineKeyboardBuilder()
+    lines = [f"Мероприятия (ID группы {gid})"]
+    if events:
+        for eid, name, time_str, resp_uid in events:
+            who: str
+            time_disp = format_event_time_display(time_str)
+            if resp_uid:
+                u = UserRepo.get_by_id(resp_uid)
+                if u:
+                    _iid, _tid, _uname, _phone, _first, _last = u
+                    if _uname:
+                        who = f"ответственный: @{_uname}"
+                    elif _first or _last:
+                        who = f"ответственный: {(_first or '').strip()} {(_last or '').strip()}".strip()
+                    else:
+                        who = f"ответственный: {_tid}"
+                else:
+                    who = f"ответственный: {resp_uid}"
+            else:
+                who = "без ответственного"
+            lines.append(f"• {name}\n{time_disp} | {who}")
+            # Only an Open button in the list; booking is managed inside the event card
+            kb.button(text=f"Открыть: {name}", callback_data=f"evt_open:{eid}:{gid}")
+        kb.adjust(1)
+    else:
+        lines.append("Пока нет мероприятий")
+    # Кнопки действий (создание) и назад
+    # Hide "+ Создать" for plain members
+    role = RoleRepo.get_user_role(internal_user_id, gid) if internal_user_id is not None else None
+    if role in ("owner", "admin") or callback.from_user.id == SUPERADMIN_ID:
+        kb.row(types.InlineKeyboardButton(text="+ Создать", callback_data=f"evt_create:{gid}"))
+    kb.row(types.InlineKeyboardButton(text="⬅️ Назад", callback_data=f"grp_menu:{gid}"))
+    await set_menu_message(callback.from_user.id, callback.message.chat.id, "\n".join(lines), kb.as_markup())
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('evt_open:'))
+async def cb_event_open(callback: types.CallbackQuery):
+    print(f"DEBUG: cb_event_open called with data: {callback.data}")
+    try:
+        _, eid, gid = callback.data.split(':')
+        eid_i = int(eid)
+        gid_i = int(gid)
+        print(f"DEBUG: Parsed eid_i={eid_i}, gid_i={gid_i}")
+        await callback.answer()
+        print(f"DEBUG: After callback.answer()")
+        from aiogram.utils.keyboard import InlineKeyboardBuilder
+        print(f"DEBUG: Before EventRepo.get_by_id")
+        ev = EventRepo.get_by_id(eid_i)
+        print(f"DEBUG: Event data: {ev}")
+        if not ev:
+            print(f"DEBUG: Event not found")
+            await callback.message.answer("Мероприятие не найдено")
+            return
+        _id, name, time_str, group_id, resp_uid = ev
+        # Resolve current user internal id
+        urow = UserRepo.get_by_telegram_id(callback.from_user.id)
+        internal_user_id = urow[0] if urow else None
+        kb = InlineKeyboardBuilder()
+        
+        # Role-based controls
+        role = RoleRepo.get_user_role(internal_user_id, gid_i) if internal_user_id is not None else None
+        if role in ("owner", "admin") or callback.from_user.id == SUPERADMIN_ID:
+            kb.row(
+                types.InlineKeyboardButton(text="✏️ Переименовать", callback_data=f"evt_rename:{eid_i}:{gid_i}"),
+                types.InlineKeyboardButton(text="🕒 Изм. дату/время", callback_data=f"evt_retime:{eid_i}:{gid_i}")
+            )
+            kb.row(
+                types.InlineKeyboardButton(text="Назначить ответственного", callback_data=f"evt_assign:{eid_i}:{gid_i}"),
+                types.InlineKeyboardButton(text="🗑 Удалить", callback_data=f"evt_delete:{eid_i}:{gid_i}")
+            )
+        # Owner or Superadmin can send an immediate notify to the group and DM responsible
+        if (role == "owner") or (callback.from_user.id == SUPERADMIN_ID):
+            kb.row(types.InlineKeyboardButton(text="📣 Отправить оповещение", callback_data=f"evt_notify_now:{eid_i}:{gid_i}"))
+        # Booking/unbooking in event card for participants
+        if not resp_uid:
+            kb.row(types.InlineKeyboardButton(text="Забронировать", callback_data=f"evt_book_toggle:{eid_i}:{gid_i}"))
+        else:
+            # Allow unassign button for owners/admins/superadmin or the responsible themselves
+            if internal_user_id is not None and (internal_user_id == resp_uid or role in ("owner", "admin") or callback.from_user.id == SUPERADMIN_ID):
+                kb.row(types.InlineKeyboardButton(text="❌ Убрать ответственного", callback_data=f"evt_unassign:{eid_i}:{gid_i}"))
+        
+        # Group notifications only for owner/admin/superadmin
+        if internal_user_id and can_edit_event_notifications(internal_user_id, eid_i):
+            kb.row(types.InlineKeyboardButton(text="🔔 Групповые оповещения", callback_data=f"evt_notifications:{eid_i}:{gid_i}"))
+        # Personal notifications for responsible OR owner/admin/superadmin
+        if internal_user_id and (
+            (resp_uid and internal_user_id == resp_uid)
+            or (role in ("owner", "admin") or callback.from_user.id == SUPERADMIN_ID)
+        ):
+            kb.row(types.InlineKeyboardButton(text="📱 Личные оповещения", callback_data=f"evt_personal_notifications:{eid_i}:{gid_i}"))
+
+        kb.row(types.InlineKeyboardButton(text="⬅️ Назад", callback_data=f"grp_events:{gid_i}"))
+        
+        # Prepare display text for responsible person
+        if resp_uid:
+            u = UserRepo.get_by_id(resp_uid)
+            if u:
+                _iid, _tid, _uname, _phone, _first, _last = u
+                if _uname:
+                    resp_text = f"@{_uname}"
+                elif _first or _last:
+                    resp_text = f"{(_first or '').strip()} {(_last or '').strip()}".strip()
+                else:
+                    resp_text = str(_tid)
+            else:
+                resp_text = str(resp_uid)
+        else: 
+            resp_text = 'не назначен'
+        text = f"{name}\nВремя: {format_event_time_display(time_str)}\nОтветственный: {resp_text}"
+        await set_menu_message(callback.from_user.id, callback.message.chat.id, text, kb.as_markup())
+    except Exception as e:
+        print(f"DEBUG: Error in cb_event_open: {e}")
+        import traceback
+        traceback.print_exc()
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('evt_delete:'))
+async def cb_event_delete(callback: types.CallbackQuery):
+    _, eid, gid = callback.data.split(':')
+    EventRepo.delete(int(eid))
+    await callback.answer("Удалено")
+    # refresh list
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    gid_i = int(gid)
+    events = EventRepo.list_by_group(gid_i)
+    kb = InlineKeyboardBuilder()
+    lines = [f"Мероприятия (ID группы {gid_i})"]
+    if events:
+        for eid, name, time_str, resp_uid in events:
+            if resp_uid:
+                u = UserRepo.get_by_id(resp_uid)
+                if u:
+                    _iid, _tid, _uname, _phone, _first, _last = u
+                    if _uname:
+                        who = f"ответственный: @{_uname}"
+                    elif _first or _last:
+                        who = f"ответственный: {(_first or '').strip()} {(_last or '').strip()}".strip()
+                    else:
+                        who = f"ответственный: {_tid}"
+                else:
+                    who = f"ответственный: {resp_uid}"
+            else:
+                who = "без ответственного"
+            lines.append(f"• {name}\n{time_str} | {who}")
+            kb.button(text=f"Открыть: {name}", callback_data=f"evt_open:{eid}:{gid_i}")
+        kb.adjust(1)
+    else:
+        lines.append("Пока нет мероприятий")
+    kb.row(types.InlineKeyboardButton(text="+ Создать", callback_data=f"evt_create:{gid_i}"))
+    kb.row(types.InlineKeyboardButton(text="⬅️ Назад", callback_data=f"grp_menu:{gid_i}"))
+    await set_menu_message(callback.from_user.id, callback.message.chat.id, "\n".join(lines), kb.as_markup())
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('evt_assign:'))
+async def cb_event_assign(callback: types.CallbackQuery):
+    _, eid, gid = callback.data.split(':')
+    eid_i = int(eid)
+    gid_i = int(gid)
+    await safe_answer(callback)
+    prompt = await callback.message.answer("Введите @username или ID Telegram ответственного пользователя")
+    AWAITING_EVENT_CREATE[callback.from_user.id] = {
+        'mode': 'assign', 'eid': eid_i, 'gid': gid_i,
+        'edit_chat_id': callback.message.chat.id,
+        'edit_message_id': callback.message.message_id,
+        'prompt_message_id': prompt.message_id,
+    }
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('evt_unassign:'))
+async def cb_event_unassign(callback: types.CallbackQuery):
+    _, eid, gid = callback.data.split(':')
+    eid_i = int(eid)
+    gid_i = int(gid)
+    EventRepo.set_responsible(eid_i, None)
+    await callback.answer("Ответственный снят")
+    # refresh card directly
+    ev = EventRepo.get_by_id(eid_i)
+    if ev:
+        _id, name, time_str, group_id, resp_uid = ev
+        from aiogram.utils.keyboard import InlineKeyboardBuilder
+        kb = InlineKeyboardBuilder()
+        # Current user role
+        urow = UserRepo.get_by_telegram_id(callback.from_user.id)
+        internal_user_id = urow[0] if urow else None
+        role = RoleRepo.get_user_role(internal_user_id, gid_i) if internal_user_id is not None else None
+        # Admin controls
+        if role in ("owner", "admin") or callback.from_user.id == SUPERADMIN_ID:
+            kb.row(
+                types.InlineKeyboardButton(text="✏️ Переименовать", callback_data=f"evt_rename:{eid_i}:{gid_i}"),
+                types.InlineKeyboardButton(text="🕒 Изм. дату/время", callback_data=f"evt_retime:{eid_i}:{gid_i}")
+            )
+            kb.row(
+                types.InlineKeyboardButton(text="Назначить ответственного", callback_data=f"evt_assign:{eid_i}:{gid_i}"),
+                types.InlineKeyboardButton(text="🗑 Удалить", callback_data=f"evt_delete:{eid_i}:{gid_i}")
+            )
+        # Booking controls
+        if not resp_uid:
+            kb.row(types.InlineKeyboardButton(text="Забронировать", callback_data=f"evt_book_toggle:{eid_i}:{gid_i}"))
+        else:
+            if internal_user_id is not None and (internal_user_id == resp_uid or role in ("owner", "admin") or callback.from_user.id == SUPERADMIN_ID):
+                kb.row(types.InlineKeyboardButton(text="❌ Убрать ответственного", callback_data=f"evt_unassign:{eid_i}:{gid_i}"))
+        # Group notifications for admins
+        if internal_user_id and can_edit_event_notifications(internal_user_id, eid_i):
+            kb.row(types.InlineKeyboardButton(text="🔔 Групповые оповещения", callback_data=f"evt_notifications:{eid_i}:{gid_i}"))
+        # Personal notifications for responsible OR owner/admin/superadmin
+        if internal_user_id and (
+            (resp_uid and internal_user_id == resp_uid)
+            or (role in ("owner", "admin") or callback.from_user.id == SUPERADMIN_ID)
+        ):
+            kb.row(types.InlineKeyboardButton(text="📱 Личные оповещения", callback_data=f"evt_personal_notifications:{eid_i}:{gid_i}"))
+        kb.row(types.InlineKeyboardButton(text="⬅️ Назад", callback_data=f"grp_events:{gid_i}"))
+        
+        # Prepare display text for responsible person
+        if resp_uid:
+            u = UserRepo.get_by_id(resp_uid)
+            if u:
+                _iid, _tid, _uname, _phone, _first, _last = u
+                if _uname:
+                    resp_text = f"@{_uname}"
+                elif _first or _last:
+                    resp_text = f"{(_first or '').strip()} {(_last or '').strip()}".strip()
+                else:
+                    resp_text = str(_tid)
+            else:
+                resp_text = str(resp_uid)
+        else:
+            resp_text = 'не назначен'
+        text = f"{name}\nВремя: {format_event_time_display(time_str)}\nОтветственный: {resp_text}"
+        await set_menu_message(callback.from_user.id, callback.message.chat.id, text, kb.as_markup())
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('evt_rename:'))
+async def cb_event_rename_prompt(callback: types.CallbackQuery):
+    _, eid, gid = callback.data.split(':')
+    await safe_answer(callback)
+    prompt = await callback.message.answer("Введите новое название мероприятия")
+    AWAITING_EVENT_EDIT[callback.from_user.id] = {
+        'eid': int(eid), 'gid': int(gid), 'mode': 'rename',
+        'edit_chat_id': callback.message.chat.id, 'edit_message_id': callback.message.message_id,
+        'prompt_message_id': prompt.message_id,
+    }
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('evt_retime:'))
+async def cb_event_retime_prompt(callback: types.CallbackQuery):
+    _, eid, gid = callback.data.split(':')
+    await safe_answer(callback)
+    prompt = await callback.message.answer(
+        "Введите новую дату/время (напр. '22 сентября 8 утра', '15.09.2025 00:00', '15.09.2025 00:00:00')"
+    )
+    AWAITING_EVENT_EDIT[callback.from_user.id] = {
+        'eid': int(eid), 'gid': int(gid), 'mode': 'retime',
+        'edit_chat_id': callback.message.chat.id, 'edit_message_id': callback.message.message_id,
+        'prompt_message_id': prompt.message_id,
+    }
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('evt_notifications:'))
+async def cb_event_notifications(callback: types.CallbackQuery):
+    _, eid, gid = callback.data.split(':')
+    eid_i = int(eid)
+    gid_i = int(gid)
+    await safe_answer(callback)
+    
+    # Check permissions
+    urow = UserRepo.get_by_telegram_id(callback.from_user.id)
+    internal_user_id = urow[0] if urow else None
+    if not internal_user_id or not can_edit_event_notifications(internal_user_id, eid_i):
+        await callback.message.answer("У вас нет прав для редактирования оповещений этого мероприятия")
+        return
+    
+    # Use the new refresh function
+    await refresh_event_notifications_view(callback.message, eid_i, gid_i, internal_user_id)
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('evt_personal_notifications:'))
+async def cb_event_personal_notifications(callback: types.CallbackQuery):
+    _, eid, gid = callback.data.split(':')
+    eid_i = int(eid)
+    gid_i = int(gid)
+    await safe_answer(callback)
+    
+    # Get user
+    urow = UserRepo.get_by_telegram_id(callback.from_user.id)
+    if not urow:
+        await callback.message.answer("Пользователь не найден")
+        return
+    internal_user_id = urow[0]
+    
+    # If user has no personal notifications, seed once:
+    existing = PersonalEventNotificationRepo.list_by_user_and_event(internal_user_id, eid_i)
+    ev = EventRepo.get_by_id(eid_i)
+    if ev:
+        _eid, _name, _time_str, _group_id, _resp_uid = ev
+        if not existing and _resp_uid and _resp_uid == internal_user_id:
+            # 1) Owner's personal notifications for this event
+            grp = GroupRepo.get_by_id(_group_id)
+            owner_uid = grp[3] if grp else None
+            owner_personals = PersonalEventNotificationRepo.list_by_user_and_event(owner_uid, eid_i) if owner_uid else []
+            seeded = False
+            if owner_personals:
+                for _pid, time_before, time_unit, message_text in owner_personals:
+                    PersonalEventNotificationRepo.add_notification(internal_user_id, eid_i, time_before, time_unit, message_text)
+                seeded = True
+            if not seeded:
+                # 2) Event notifications
+                base = EventNotificationRepo.list_by_event(eid_i)
+                if base:
+                    for _nid, time_before, time_unit, message_text in base:
+                        PersonalEventNotificationRepo.add_notification(internal_user_id, eid_i, time_before, time_unit, message_text)
+                    seeded = True
+            if not seeded:
+                # 3) Group defaults
+                PersonalEventNotificationRepo.create_from_group_for_user(eid_i, _group_id, internal_user_id)
+    # Use the new refresh function
+    await refresh_personal_notifications_view(callback.message, eid_i, gid_i, internal_user_id)
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('evt_notif_add:'))
+async def cb_event_notif_add(callback: types.CallbackQuery):
+    _, eid, gid, amount, unit = callback.data.split(':')
+    eid_i = int(eid)
+    gid_i = int(gid)
+    amount_i = int(amount)
+    await safe_answer(callback)
+    
+    # Check permissions
+    urow = UserRepo.get_by_telegram_id(callback.from_user.id)
+    internal_user_id = urow[0] if urow else None
+    if not internal_user_id or not can_edit_event_notifications(internal_user_id, eid_i):
+        await callback.message.answer("У вас нет прав для редактирования оповещений этого мероприятия")
+        return
+    
+    # Add notification with standard text
+    EventNotificationRepo.add_notification(eid_i, amount_i, unit, f"Через {format_duration_ru(amount_i, unit)} начало мероприятия")
+    await callback.answer("Добавлено")
+    # Refresh view by updating the message directly
+    await refresh_event_notifications_view(callback.message, eid_i, gid_i, internal_user_id)
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('evt_notif_del:'))
+async def cb_event_notif_del(callback: types.CallbackQuery):
+    _, notif_id, eid, gid = callback.data.split(':')
+    eid_i = int(eid)
+    gid_i = int(gid)
+    await safe_answer(callback)
+    
+    # Check permissions
+    urow = UserRepo.get_by_telegram_id(callback.from_user.id)
+    internal_user_id = urow[0] if urow else None
+    if not internal_user_id or not can_edit_event_notifications(internal_user_id, eid_i):
+        await callback.message.answer("У вас нет прав для редактирования оповещений этого мероприятия")
+        return
+    
+    # Delete notification
+    EventNotificationRepo.delete_notification(int(notif_id))
+    await callback.answer("Удалено")
+    # Refresh view by updating the message directly
+    await refresh_event_notifications_view(callback.message, eid_i, gid_i, internal_user_id)
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('evt_notif_add_free:'))
+async def cb_event_notif_add_free(callback: types.CallbackQuery):
+    _, eid, gid = callback.data.split(':')
+    eid_i = int(eid)
+    gid_i = int(gid)
+    await safe_answer(callback)
+    
+    # Check permissions
+    urow = UserRepo.get_by_telegram_id(callback.from_user.id)
+    internal_user_id = urow[0] if urow else None
+    if not internal_user_id or not can_edit_event_notifications(internal_user_id, eid_i):
+        await callback.message.answer("У вас нет прав для редактирования оповещений этого мероприятия")
+        return
+    
+    prompt = await callback.message.answer(
+        "Введите срок до мероприятия (например: '1 неделя', '2 дня', '1 день и 3 часа', '40 минут', '1 час 6 минут')\n"
+        "Или укажите точную дату/время оповещения: '18.09.2025 22:30', '2025-09-18 22:30'"
+    )
+    AWAITING_EVENT_NOTIF[callback.from_user.id] = {
+        'eid': eid_i,
+        'gid': gid_i,
+        'edit_chat_id': callback.message.chat.id,
+        'edit_message_id': callback.message.message_id,
+        'prompt_message_id': prompt.message_id,
+    }
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('evt_personal_notif_add:'))
+async def cb_personal_notif_add(callback: types.CallbackQuery):
+    _, eid, gid, amount, unit = callback.data.split(':')
+    eid_i = int(eid)
+    gid_i = int(gid)
+    amount_i = int(amount)
+    await safe_answer(callback)
+    
+    # Get user
+    urow = UserRepo.get_by_telegram_id(callback.from_user.id)
+    if not urow:
+        await callback.message.answer("Пользователь не найден")
+        return
+    internal_user_id = urow[0]
+    
+    # Add personal notification with standard text
+    PersonalEventNotificationRepo.add_notification(internal_user_id, eid_i, amount_i, unit, f"Через {format_duration_ru(amount_i, unit)} начало мероприятия")
+    await callback.answer("Добавлено")
+    # Refresh view by updating the message directly
+    await refresh_personal_notifications_view(callback.message, eid_i, gid_i, internal_user_id)
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('evt_personal_notif_del:'))
+async def cb_personal_notif_del(callback: types.CallbackQuery):
+    _, notif_id, eid, gid = callback.data.split(':')
+    eid_i = int(eid)
+    gid_i = int(gid)
+    await safe_answer(callback)
+    
+    # Get user
+    urow = UserRepo.get_by_telegram_id(callback.from_user.id)
+    if not urow:
+        await callback.message.answer("Пользователь не найден")
+        return
+    internal_user_id = urow[0]
+    
+    # Delete personal notification
+    PersonalEventNotificationRepo.delete_notification(int(notif_id), internal_user_id)
+    await callback.answer("Удалено")
+    # Refresh view by updating the message directly
+    await refresh_personal_notifications_view(callback.message, eid_i, gid_i, internal_user_id)
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('evt_personal_notif_add_free:'))
+async def cb_personal_notif_add_free(callback: types.CallbackQuery):
+    _, eid, gid = callback.data.split(':')
+    eid_i = int(eid)
+    gid_i = int(gid)
+    await safe_answer(callback)
+    
+    # Get user
+    urow = UserRepo.get_by_telegram_id(callback.from_user.id)
+    if not urow:
+        await callback.message.answer("Пользователь не найден")
+        return
+    
+    prompt = await callback.message.answer(
+        "Введите срок до мероприятия (например: '1 неделя', '2 дня', '1 день и 3 часа', '40 минут', '1 час 6 минут')\n"
+        "Или укажите точную дату/время оповещения: '18.09.2025 22:30', '2025-09-18 22:30'"
+    )
+    AWAITING_PERSONAL_NOTIF[callback.from_user.id] = {
+        'eid': eid_i,
+        'gid': gid_i,
+        'edit_chat_id': callback.message.chat.id,
+        'edit_message_id': callback.message.message_id,
+        'prompt_message_id': prompt.message_id,
+    }
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('evt_create:'))
+async def cb_event_create(callback: types.CallbackQuery):
+    _, gid = callback.data.split(':')
+    gid_i = int(gid)
+    await callback.answer()
+    prompt = await callback.message.answer("Введите название мероприятия")
+    AWAITING_EVENT_CREATE[callback.from_user.id] = {
+        'mode': 'create', 'gid': gid_i, 'step': 'name',
+        'edit_chat_id': callback.message.chat.id,
+        'edit_message_id': callback.message.message_id,
+        'prompt_message_id': prompt.message_id,
+    }
+
+def build_notifies_ui(gid: int):
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    group = GroupRepo.get_by_id(gid)
+    group_title = group[2] if group else f"Группа {gid}"
+    header = f"Оповещения: {group_title} (ID {gid})"
+    notifies = NotificationRepo.list_notifications(gid)
+    kb = InlineKeyboardBuilder()
+    if notifies:
+        for nid, time_before, time_unit, message_text, is_default in notifies:
+            pretty = format_duration_ru(time_before if time_unit=='minutes' else time_before, time_unit)
+            kb.row(
+                types.InlineKeyboardButton(text=pretty, callback_data="noop"),
+                types.InlineKeyboardButton(text="🗑 Удалить", callback_data=f"notif_del:{nid}:{gid}")
+            )
+    else:
+        kb.row(types.InlineKeyboardButton(text="Нет настроек", callback_data="noop"))
+    kb.row(
+        types.InlineKeyboardButton(text="+ 3 дня", callback_data=f"notif_add:{gid}:3:days"),
+        types.InlineKeyboardButton(text="+ 1 день", callback_data=f"notif_add:{gid}:1:days"),
+        types.InlineKeyboardButton(text="+ 2 часа", callback_data=f"notif_add:{gid}:2:hours")
+    )
+    kb.row(types.InlineKeyboardButton(text="+ Ввести вручную…", callback_data=f"notif_add_free:{gid}"))
+    # Назад к меню группы
+    kb.row(types.InlineKeyboardButton(text="⬅️ Назад", callback_data=f"grp_menu:{gid}"))
+    return header, kb.as_markup()
+
+
+def build_admins_ui(gid: int):
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    kb = InlineKeyboardBuilder()
+    admins = GroupRepo.list_group_admins(gid)
+    pending = RoleRepo.list_pending_admins(gid)
+    lines = [f"Администраторы группы {gid}"]
+    if admins:
+        lines.append("Подтвержденные:")
+        for uid, tid, uname in admins:
+            uname_disp = f"@{uname}" if uname else str(tid)
+            kb.row(
+                types.InlineKeyboardButton(text=uname_disp, callback_data="noop"),
+                types.InlineKeyboardButton(text="🗑 Удалить", callback_data=f"adm_del:{uid}:{gid}")
+            )
+    else:
+        kb.row(types.InlineKeyboardButton(text="Нет подтвержденных админов", callback_data="noop"))
+    if pending:
+        lines.append("")
+        lines.append("Ожидающие подтверждения:")
+        for pid, ident, ident_type, created_by, created_at in pending:
+            kb.row(
+                types.InlineKeyboardButton(text=f"{ident_type}: {ident}", callback_data="noop"),
+                types.InlineKeyboardButton(text="🗑 Удалить", callback_data=f"padm_del:{pid}:{gid}")
+            )
+    # Add controls
+    kb.row(types.InlineKeyboardButton(text="+ Добавить по ID", callback_data=f"adm_add_id:{gid}"))
+    kb.row(types.InlineKeyboardButton(text="+ Добавить по @username", callback_data=f"adm_add_username:{gid}"))
+    kb.row(types.InlineKeyboardButton(text="+ Добавить по телефону", callback_data=f"adm_add_phone:{gid}"))
+    kb.row(types.InlineKeyboardButton(text="⬅️ Назад", callback_data=f"grp_menu:{gid}"))
+    return "\n".join(lines), kb.as_markup()
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('grp_notifies:'))
+async def cb_group_notifies(callback: types.CallbackQuery):
+    gid = int(callback.data.split(':', 1)[1])
+    await callback.answer()
+    header, markup = build_notifies_ui(gid)
+    await set_menu_message(callback.from_user.id, callback.message.chat.id, header, markup)
+
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('grp_remind:'))
+async def cb_group_remind(callback: types.CallbackQuery):
+    gid = int(callback.data.split(':', 1)[1])
+    await callback.answer()
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    kb = InlineKeyboardBuilder()
+    kb.row(
+        types.InlineKeyboardButton(text="1 неделя", callback_data=f"grp_remind_period:{gid}:7days"),
+        types.InlineKeyboardButton(text="1 месяц", callback_data=f"grp_remind_period:{gid}:1month"),
+    )
+    kb.row(types.InlineKeyboardButton(text="⬅️ Назад", callback_data=f"grp_menu:{gid}"))
+    await set_menu_message(callback.from_user.id, callback.message.chat.id, "Выберите период для напоминаний:", kb.as_markup())
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('grp_remind_period:'))
+async def cb_group_remind_period(callback: types.CallbackQuery):
+    _, gid, period = callback.data.split(':')
+    gid_i = int(gid)
+    await callback.answer()
+    # Permissions: owner/admin/superadmin only
+    urow = UserRepo.get_by_telegram_id(callback.from_user.id)
+    internal_user_id = urow[0] if urow else None
+    role = RoleRepo.get_user_role(internal_user_id, gid_i) if internal_user_id is not None else None
+    if not (callback.from_user.id == SUPERADMIN_ID or role in ("owner", "admin")):
+        await callback.message.answer("Недостаточно прав")
+        return
+    # Compute range
+    now = datetime.utcnow()
+    if period == '7days':
+        end = now + timedelta(days=7)
+    else:
+        end = now + timedelta(days=30)
+    start_iso = now.strftime('%Y-%m-%d %H:%M:%S')
+    end_iso = end.strftime('%Y-%m-%d %H:%M:%S')
+    events = EventRepo.list_by_group_between(gid_i, start_iso, end_iso)
+    # Resolve target chat: send to the group's chat, not to the user's PM
+    grp = GroupRepo.get_by_id(gid_i)
+    if not grp:
+        await callback.message.answer("Группа не найдена")
+        return
+    try:
+        target_chat_id = int(grp[1])  # telegram_chat_id
+    except Exception:
+        target_chat_id = grp[1]
     if not events:
-        await message.answer(f"В группе '{group[2]}' на ближайший месяц нет мероприятий.")
+        await callback.message.answer("В выбранный период мероприятий нет")
         return
-    
-    # Получаем chat_id целевой группы для отправки напоминаний
-    target_chat_id = group[1]  # group[1] = chat_id группы в Telegram
-    
-    for event_id, name, time, responsible, _ in events:
-        builder = InlineKeyboardBuilder()
-        if responsible:
-            builder.button(text=responsible, callback_data=f"unbook_{event_id}")
-        else:
-            builder.button(text="Забронировать", callback_data=f"book_{event_id}")
-
-        markup = builder.as_markup()
-        msg_text = f"Мероприятие: {name}\nДата и время: {datetime.strptime(time, '%Y-%m-%d %H:%M:%S').strftime('%d.%m.%Y %H:%M')}\nГруппа: {group[2]}"  # group[2] = название группы
-
-        # Отправляем напоминание в целевую группу
-        try:
-            await bot.send_message(target_chat_id, msg_text, reply_markup=markup)
-        except Exception as e:
-            print(f"Не удалось отправить напоминание в группу {target_chat_id}: {e}")
-            # Если не удалось отправить в целевую группу, отправляем в текущий чат
-            await message.answer(f"Не удалось отправить в группу {group[2]}: {msg_text}", reply_markup=markup)
-    
-    # Отправляем финальное подтверждение
-    await message.answer(f"✅ Отправлено {len(events)} напоминаний в группу '{group[2]}'")
-
-# Список всех мероприятий
-@dp.message(Command("list_events"))
-async def list_events(message: Message):
-    user_id = message.from_user.id
-    if not (is_superadmin(user_id) or group_manager.get_user_admin_groups(user_id)):
-        await message.answer("У вас нет прав для получения списка мероприятий.")
-        return
-
-    if is_superadmin(user_id):
-        # Суперадмин видит все мероприятия
-        events = event_manager.get_all_events()
-        if not events:
-            await message.answer("Не найдено мероприятий для отображения.")
-            return
-
-        event_list_message = "Все мероприятия:\n"
-        for event_id, name, time, responsible, group_id in events:
-            time_formatted = datetime.strptime(time, '%Y-%m-%d %H:%M:%S').strftime('%d.%m.%Y %H:%M')
-            responsible_text = responsible if responsible else "Свободное"
-            group = group_manager.get_group_by_id(group_id)
-            group_name = group[2] if group else f"Группа {group_id}"  # group[2] = название группы
-            event_list_message += f"\nID: {event_id} | {name}\nДата и время: {time_formatted}\nОтветственный: @{responsible_text}\nГруппа: {group_name}\n"
-    else:
-        # Обычный админ видит только мероприятия своих групп
-        user_groups = group_manager.get_user_admin_groups(user_id)
-        if not user_groups:
-            await message.answer("У вас нет групп для просмотра мероприятий.")
-            return
-        
-        event_list_message = "Мероприятия в ваших группах:\n"
-        for group_id, group_title in user_groups:
-            events = event_manager.get_events_by_group(group_id)
-            if events:
-                event_list_message += f"\n--- {group_title} ---\n"
-                for event_id, name, time, responsible, _ in events:
-                    time_formatted = datetime.strptime(time, '%Y-%m-%d %H:%M:%S').strftime('%d.%m.%Y %H:%M')
-                    responsible_text = responsible if responsible else "Свободное"
-                    event_list_message += f"ID: {event_id} | {name}\nДата и время: {time_formatted}\nОтветственный: @{responsible_text}\n"
+    # Send messages with booking button
+    for eid, name, time_str, resp_uid in events:
+        # Resolve responsible display
+        if resp_uid:
+            u = UserRepo.get_by_id(resp_uid)
+            if u:
+                _iid, _tid, _uname, _phone, _first, _last = u
+                if _uname:
+                    who = f"@{_uname}"
+                elif _first or _last:
+                    who = f"{(_first or '').strip()} {(_last or '').strip()}".strip()
+                else:
+                    who = str(_tid)
             else:
-                event_list_message += f"\n--- {group_title} ---\nНет мероприятий\n"
-
-    await message.answer(event_list_message)
-
-# Обработка бронирования
-@dp.callback_query(lambda c: c.data.startswith('book_'))
-async def handle_booking(callback_query: types.CallbackQuery):
-    event_id = int(callback_query.data.split('_')[1])
-    event = event_manager.get_event(event_id)
-    
-    if not event:
-        await callback_query.answer("Мероприятие не найдено.")
-        return
-    
-    if event[3]:  # responsible
-        await callback_query.answer("Это мероприятие уже забронировано.")
-        return
-    
-    # Бронируем мероприятие (убрали ограничения - могут все)
-    user_id = callback_query.from_user.id
-    user_name = (
-        callback_query.from_user.username or
-        f"{callback_query.from_user.first_name} {callback_query.from_user.last_name}".strip() or
-        f"id_{callback_query.from_user.id}"
-    )
-    
-    if event_manager.update_event_responsible(event_id, user_name, user_id):
-        builder = InlineKeyboardBuilder()
-        builder.button(text=user_name, callback_data=f"unbook_{event_id}")
-        markup = builder.as_markup()
-        
-        await bot.edit_message_reply_markup(
-            chat_id=callback_query.message.chat.id,
-            message_id=callback_query.message.message_id,
-            reply_markup=markup
-        )
-        await callback_query.answer("Вы забронировали мероприятие.")
-    else:
-        await callback_query.answer("Не удалось забронировать мероприятие.")
-
-# Обработка отмены бронирования
-@dp.callback_query(lambda c: c.data.startswith('unbook_'))
-async def handle_unbooking(callback_query: types.CallbackQuery):
-    event_id = int(callback_query.data.split('_')[1])
-    event = event_manager.get_event(event_id)
-    
-    if not event:
-        await callback_query.answer("Мероприятие не найдено.")
-        return
-    
-    user_id = callback_query.from_user.id
-    responsible_user_id = event[5]  # responsible_user_id
-    
-    # Проверяем права: может отменить тот, кто забронировал, или админы/суперадмины
-    can_unbook = (
-        responsible_user_id == user_id or  # тот, кто забронировал
-        is_superadmin(user_id) or  # суперадмин
-        is_group_admin(user_id, event[4])  # админ группы
-    )
-    
-    if not can_unbook:
-        await callback_query.answer("Вы можете отменить только свои бронирования.")
-        return
-    
-    if event_manager.update_event_responsible(event_id, None, None):
-        builder = InlineKeyboardBuilder()
-        builder.button(text="Забронировать", callback_data=f"book_{event_id}")
-        markup = builder.as_markup()
-        
-        await bot.edit_message_reply_markup(
-            chat_id=callback_query.message.chat.id,
-            message_id=callback_query.message.message_id,
-            reply_markup=markup
-        )
-        await callback_query.answer("Мероприятие снова доступно для бронирования.")
-    else:
-        await callback_query.answer("Не удалось отменить бронирование.")
-
-# Напоминание о мероприятии
-async def send_reminder(event_id, time_before, group_id):
-    event = event_manager.get_event(event_id)
-    if not event:
-        return
-    
-    name, time, responsible = event[1], event[2], event[3]
-    group = group_manager.get_group_by_id(group_id)
-    group_title = group[2] if group else f"Группа {group_id}"  # group[2] = название группы
-    
-    message = f"Напоминание: {time_before} до мероприятия '{name}'.\n"
-    message += f"Дата и время: {datetime.strptime(time, '%Y-%m-%d %H:%M:%S').strftime('%d.%m.%Y %H:%M')}\n"
-    message += f"Группа: {group_title}\n"
-    message += f"Ответственный: @{responsible}" if responsible else "Ответственного пока нет("
-    
-    builder = InlineKeyboardBuilder()
-    if responsible:
-        builder.button(text=responsible, callback_data=f"unbook_{event_id}")
-    else:
-        builder.button(text="Забронировать", callback_data=f"book_{event_id}")
-    
-    markup = builder.as_markup()
-    
-    # Отправляем напоминание в группу
-    try:
-        # Получаем chat_id группы для отправки сообщения
-        group_info = group_manager.get_group_by_id(group_id)
-        print(f"DEBUG: group_info for group_id {group_id}: {group_info}")
-        if group_info:
-            # group_info[0] = id группы в системе
-            # group_info[1] = chat_id в Telegram (столбец chat_id)
-            # group_info[2] = название группы
-            chat_id = group_info[1]  # chat_id из базы (правильный столбец)
-            group_title = group_info[2]  # название группы
-            print(f"DEBUG: group_info[0] (id): {group_info[0]}")
-            print(f"DEBUG: group_info[1] (chat_id): {chat_id}")
-            print(f"DEBUG: group_info[2] (title): {group_title}")
-            print(f"DEBUG: Sending reminder to chat_id: {chat_id} for group_id: {group_id}")
-            await bot.send_message(chat_id, message, reply_markup=markup)
+                who = str(resp_uid)
         else:
-            print(f"Группа {group_id} не найдена для отправки напоминания")
+            who = None
+        from aiogram.utils.keyboard import InlineKeyboardBuilder
+        kb = InlineKeyboardBuilder()
+        label = who if who else "Забронировать"
+        kb.row(types.InlineKeyboardButton(text=label, callback_data=f"evt_book_toggle:{eid}:{gid_i}"))
+        text = f"• {name}\n{format_event_time_display(time_str)}"
+        await bot.send_message(target_chat_id, text, reply_markup=kb.as_markup())
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('evt_book_toggle:'))
+async def cb_evt_book_toggle(callback: types.CallbackQuery):
+    _, eid, gid = callback.data.split(':')
+    eid_i = int(eid)
+    gid_i = int(gid)
+    await callback.answer()
+    # Fetch event
+    ev = EventRepo.get_by_id(eid_i)
+    if not ev:
+        await callback.message.answer("Мероприятие не найдено")
+        return
+    _id, name, time_str, group_id, resp_uid = ev
+    # If no responsible -> set to current user
+    if not resp_uid:
+        # ensure user exists
+        urow = UserRepo.get_by_telegram_id(callback.from_user.id)
+        if not urow:
+            UserRepo.upsert_user(
+                telegram_id=callback.from_user.id,
+                username=callback.from_user.username,
+                phone=None,
+                first_name=callback.from_user.first_name,
+                last_name=callback.from_user.last_name,
+            )
+            urow = UserRepo.get_by_telegram_id(callback.from_user.id)
+        internal_user_id = urow[0]
+        EventRepo.set_responsible(eid_i, internal_user_id)
+        # Ensure the user sees the group in their menu only if he has no role yet
+        try:
+            current_role = RoleRepo.get_user_role(internal_user_id, gid_i)
+            if not current_role:
+                RoleRepo.add_role(internal_user_id, gid_i, 'member', confirmed=True)
+        except Exception:
+            pass
+        # Seed personal notifications for the new responsible IF none exist
+        existing_personal = PersonalEventNotificationRepo.list_by_user_and_event(internal_user_id, eid_i)
+        if not existing_personal:
+            ev2 = EventRepo.get_by_id(eid_i)
+            if ev2:
+                _id2, _name2, _time2, group_id2, _resp2 = ev2
+                # 1) Try to copy owner's personal notifications for this event
+                grp = GroupRepo.get_by_id(group_id2)
+                owner_uid = grp[3] if grp else None
+                owner_personals = PersonalEventNotificationRepo.list_by_user_and_event(owner_uid, eid_i) if owner_uid else []
+                seeded = False
+                if owner_personals:
+                    for _pid, time_before, time_unit, message_text in owner_personals:
+                        PersonalEventNotificationRepo.add_notification(internal_user_id, eid_i, time_before, time_unit, message_text)
+                    seeded = True
+                if not seeded:
+                    # 2) Fallback to event-specific notifications
+                    event_notifs = EventNotificationRepo.list_by_event(eid_i)
+                    if event_notifs:
+                        for _nid, time_before, time_unit, message_text in event_notifs:
+                            PersonalEventNotificationRepo.add_notification(internal_user_id, eid_i, time_before, time_unit, message_text)
+                        seeded = True
+                if not seeded:
+                    # 3) Fallback to group settings if no event-level notifications
+                    PersonalEventNotificationRepo.create_from_group_for_user(eid_i, group_id2, internal_user_id)
+    else:
+        # Allow the responsible themselves to unbook; otherwise require owner/admin/superadmin
+        urow = UserRepo.get_by_telegram_id(callback.from_user.id)
+        internal_user_id = urow[0] if urow else None
+        if internal_user_id == resp_uid:
+            EventRepo.set_responsible(eid_i, None)
+        else:
+            role = RoleRepo.get_user_role(internal_user_id, gid_i) if internal_user_id is not None else None
+            if not (callback.from_user.id == SUPERADMIN_ID or role in ("owner", "admin")):
+                await callback.answer("Только владелец/админ/суперадмин может снять бронь", show_alert=False)
+                return
+            EventRepo.set_responsible(eid_i, None)
+    # Update one message button label
+    ev2 = EventRepo.get_by_id(eid_i)
+    _id2, _name2, _time2, _group2, resp2 = ev2
+    if resp2:
+        u = UserRepo.get_by_id(resp2)
+        if u:
+            _iid, _tid, _uname, _phone, _first, _last = u
+            if _uname:
+                label = f"@{_uname}"
+            elif _first or _last:
+                label = f"{(_first or '').strip()} {(_last or '').strip()}".strip()
+            else:
+                label = str(_tid)
+        else:
+            label = str(resp2)
+    else:
+        label = "Забронировать"
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    kb = InlineKeyboardBuilder()
+    kb.row(types.InlineKeyboardButton(text=label, callback_data=f"evt_book_toggle:{eid_i}:{gid_i}"))
+    try:
+        await bot.edit_message_reply_markup(chat_id=callback.message.chat.id, message_id=callback.message.message_id, reply_markup=kb.as_markup())
+    except Exception:
+        pass
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('evt_notify_now:'))
+async def cb_evt_notify_now(callback: types.CallbackQuery):
+    _, eid, gid = callback.data.split(':')
+    eid_i = int(eid)
+    gid_i = int(gid)
+    await callback.answer()
+    # Permissions: owner or superadmin
+    urow = UserRepo.get_by_telegram_id(callback.from_user.id)
+    internal_user_id = urow[0] if urow else None
+    role = RoleRepo.get_user_role(internal_user_id, gid_i) if internal_user_id is not None else None
+    if not (callback.from_user.id == SUPERADMIN_ID or role == "owner"):
+        await callback.answer("Недостаточно прав", show_alert=False)
+        return
+    ev = EventRepo.get_by_id(eid_i)
+    if not ev:
+        await callback.answer("Мероприятие не найдено", show_alert=False)
+        return
+    _id, name, time_str, group_id, resp_uid = ev
+    grp = GroupRepo.get_by_id(group_id)
+    if not grp:
+        await callback.answer("Группа не найдена", show_alert=False)
+        return
+    chat_id = grp[1]
+    # Resolve responsible label
+    label = "Забронировать"
+    if resp_uid:
+        u = UserRepo.get_by_id(resp_uid)
+        if u:
+            _iid, _tid, _uname, _phone, _first, _last = u
+            if _uname:
+                label = f"@{_uname}"
+            elif _first or _last:
+                label = f"{(_first or '').strip()} {(_last or '').strip()}".strip()
+            else:
+                label = str(_tid)
+        else:
+            label = str(resp_uid)
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    kb = InlineKeyboardBuilder()
+    kb.row(types.InlineKeyboardButton(text=label, callback_data=f"evt_book_toggle:{eid_i}:{gid_i}"))
+    # Build text per spec with responsible line
+    lines = [
+        f"Напоминание по мероприятию \"{name}\".",
+        f"{format_event_time_display(time_str)}",
+    ]
+    if resp_uid:
+        lines.append(f"Ответственный - {label}")
+    else:
+        lines.append("Ответственный еще не назначен")
+    text = "\n".join(lines)
+    # Send to group chat
+    try:
+        await bot.send_message(int(chat_id), text, reply_markup=kb.as_markup())
+    except Exception:
+        try:
+            await bot.send_message(chat_id, text, reply_markup=kb.as_markup())
+        except Exception:
+            pass
+    # DM to responsible
+    if resp_uid:
+        u = UserRepo.get_by_id(resp_uid)
+        if u:
+            _iid, _tid, _uname, _phone, _first, _last = u
+            try:
+                await bot.send_message(_tid, f"Напоминание: {name} — {format_event_time_display(time_str)}. Вы указаны ответственным.")
+            except Exception:
+                pass
+    await callback.answer("Оповещение отправлено")
+
+    # If this action happened in the private event card, refresh the card to show "❌ Убрать ответственного"
+    try:
+        if getattr(callback.message.chat, 'type', None) == 'private':
+            # rebuild event card similar to cb_event_open
+            ev_full = EventRepo.get_by_id(eid_i)
+            if ev_full:
+                _id3, name3, time_str3, group_id3, resp_uid3 = ev_full
+                # Resolve current user internal id
+                urow2 = UserRepo.get_by_telegram_id(callback.from_user.id)
+                internal_user_id2 = urow2[0] if urow2 else None
+                kb2 = InlineKeyboardBuilder()
+                role2 = RoleRepo.get_user_role(internal_user_id2, gid_i) if internal_user_id2 is not None else None
+                if role2 in ("owner", "admin") or callback.from_user.id == SUPERADMIN_ID:
+                    kb2.row(
+                        types.InlineKeyboardButton(text="✏️ Переименовать", callback_data=f"evt_rename:{eid_i}:{gid_i}"),
+                        types.InlineKeyboardButton(text="🕒 Изм. дату/время", callback_data=f"evt_retime:{eid_i}:{gid_i}")
+                    )
+                    kb2.row(
+                        types.InlineKeyboardButton(text="Назначить ответственного", callback_data=f"evt_assign:{eid_i}:{gid_i}"),
+                        types.InlineKeyboardButton(text="🗑 Удалить", callback_data=f"evt_delete:{eid_i}:{gid_i}")
+                    )
+                if not resp_uid3:
+                    kb2.row(types.InlineKeyboardButton(text="Забронировать", callback_data=f"evt_book_toggle:{eid_i}:{gid_i}"))
+                else:
+                    if internal_user_id2 is not None and (internal_user_id2 == resp_uid3 or role2 in ("owner", "admin") or callback.from_user.id == SUPERADMIN_ID):
+                        kb2.row(types.InlineKeyboardButton(text="❌ Убрать ответственного", callback_data=f"evt_unassign:{eid_i}:{gid_i}"))
+                if internal_user_id2 and can_edit_event_notifications(internal_user_id2, eid_i):
+                    kb2.row(types.InlineKeyboardButton(text="🔔 Групповые оповещения", callback_data=f"evt_notifications:{eid_i}:{gid_i}"))
+                # Personal notifications for responsible OR owner/admin/superadmin
+                if internal_user_id2 and (
+                    (resp_uid3 and internal_user_id2 == resp_uid3)
+                    or (role2 in ("owner", "admin") or callback.from_user.id == SUPERADMIN_ID)
+                ):
+                    kb2.row(types.InlineKeyboardButton(text="📱 Личные оповещения", callback_data=f"evt_personal_notifications:{eid_i}:{gid_i}"))
+                kb2.row(types.InlineKeyboardButton(text="⬅️ Назад", callback_data=f"grp_events:{gid_i}"))
+                # Prepare display text
+                if resp_uid3:
+                    u3 = UserRepo.get_by_id(resp_uid3)
+                    if u3:
+                        _iid3, _tid3, _uname3, _phone3, _first3, _last3 = u3
+                        if _uname3:
+                            resp_text3 = f"@{_uname3}"
+                        elif _first3 or _last3:
+                            resp_text3 = f"{(_first3 or '').strip()} {(_last3 or '').strip()}".strip()
+                        else:
+                            resp_text3 = str(_tid3)
+                    else:
+                        resp_text3 = str(resp_uid3)
+                else:
+                    resp_text3 = 'не назначен'
+                text3 = f"{name3}\nВремя: {format_event_time_display(time_str3)}\nОтветственный: {resp_text3}"
+                await set_menu_message(callback.from_user.id, callback.message.chat.id, text3, kb2.as_markup())
+    except Exception:
+        pass
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('grp_menu:'))
+async def cb_group_menu(callback: types.CallbackQuery):
+    gid = int(callback.data.split(':', 1)[1])
+    await callback.answer()
+    # callback.from_user.id — это Telegram ID, нужно получить внутренний user_id
+    urow = UserRepo.get_by_telegram_id(callback.from_user.id)
+    internal_user_id = urow[0] if urow else None
+    role = RoleRepo.get_user_role(internal_user_id, gid) if internal_user_id is not None else None
+    group = GroupRepo.get_by_id(gid)
+    title = group[2] if group else f"Группа {gid}"
+    role_ru = ROLE_RU.get(role or 'member', role or 'member')
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    kb = InlineKeyboardBuilder()
+    kb.button(text="Мероприятия", callback_data=f"grp_events:{gid}")
+    if role == "owner":
+        kb.button(text="Оповещения", callback_data=f"grp_notifies:{gid}")
+        kb.button(text="Администраторы", callback_data=f"grp_admins:{gid}")
+        kb.button(text="Напомнить", callback_data=f"grp_remind:{gid}")
+    kb.adjust(2)
+    await set_menu_message(callback.from_user.id, callback.message.chat.id, f"{title} (ID {gid})\nРоль - {role_ru}", kb.as_markup())
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('grp_admins:'))
+async def cb_group_admins(callback: types.CallbackQuery):
+    gid = int(callback.data.split(':', 1)[1])
+    await callback.answer()
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    kb = InlineKeyboardBuilder()
+    admins = GroupRepo.list_group_admins(gid)
+    pending = RoleRepo.list_pending_admins(gid)
+    lines = [f"Администраторы группы {gid}"]
+    if admins:
+        lines.append("Подтвержденные:")
+        for uid, tid, uname in admins:
+            uname_disp = f"@{uname}" if uname else str(tid)
+            kb.row(
+                types.InlineKeyboardButton(text=uname_disp, callback_data="noop"),
+                types.InlineKeyboardButton(text="🗑 Удалить", callback_data=f"adm_del:{uid}:{gid}")
+            )
+    else:
+        kb.row(types.InlineKeyboardButton(text="Нет подтвержденных админов", callback_data="noop"))
+    if pending:
+        lines.append("")
+        lines.append("Ожидающие подтверждения:")
+        for pid, ident, ident_type, created_by, created_at in pending:
+            kb.row(
+                types.InlineKeyboardButton(text=f"{ident_type}: {ident}", callback_data="noop"),
+                types.InlineKeyboardButton(text="🗑 Удалить", callback_data=f"padm_del:{pid}:{gid}")
+            )
+    # Add controls
+    kb.row(types.InlineKeyboardButton(text="+ Добавить по ID", callback_data=f"adm_add_id:{gid}"))
+    kb.row(types.InlineKeyboardButton(text="+ Добавить по @username", callback_data=f"adm_add_username:{gid}"))
+    kb.row(types.InlineKeyboardButton(text="+ Добавить по телефону", callback_data=f"adm_add_phone:{gid}"))
+    kb.row(types.InlineKeyboardButton(text="⬅️ Назад", callback_data=f"grp_menu:{gid}"))
+    await set_menu_message(callback.from_user.id, callback.message.chat.id, "\n".join(lines), kb.as_markup())
+
+@dp.callback_query(lambda c: c.data and (c.data.startswith('adm_add_id:') or c.data.startswith('adm_add_username:') or c.data.startswith('adm_add_phone:')))
+async def cb_admin_add_prompt(callback: types.CallbackQuery):
+    await callback.answer()
+    data = callback.data
+    if data.startswith('adm_add_id:'):
+        _, gid = data.split(':')
+        what = ('id', 'введите ID Telegram пользователя (будет добавлен как ожидающий)')
+    elif data.startswith('adm_add_username:'):
+        _, gid = data.split(':')
+        what = ('username', 'введите @username пользователя')
+    else:
+        _, gid = data.split(':')
+        what = ('phone', 'введите телефон пользователя (в любом формате)')
+    gid_i = int(gid)
+    prompt = await callback.message.answer(f"Добавление администратора: {what[1]}")
+    AWAITING_ADMIN_INPUT[callback.from_user.id] = {
+        'gid': gid_i,
+        'mode': 'add',
+        'type': what[0],
+        'edit_chat_id': callback.message.chat.id,
+        'edit_message_id': callback.message.message_id,
+        'prompt_message_id': prompt.message_id,
+    }
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('adm_del:'))
+async def cb_admin_delete(callback: types.CallbackQuery):
+    _, uid, gid = callback.data.split(':')
+    RoleRepo.remove_admin(int(uid), int(gid))
+    await callback.answer("Удалено")
+    # refresh view without constructing fake CallbackQuery
+    header, markup = build_admins_ui(int(gid))
+    await set_menu_message(callback.from_user.id, callback.message.chat.id, header, markup)
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('padm_del:'))
+async def cb_pending_admin_delete(callback: types.CallbackQuery):
+    _, pid, gid = callback.data.split(':')
+    RoleRepo.delete_pending(int(pid))
+    await callback.answer("Удалено")
+    # refresh view without constructing fake CallbackQuery
+    header, markup = build_admins_ui(int(gid))
+    await set_menu_message(callback.from_user.id, callback.message.chat.id, header, markup)
+
+
+# Notification actions
+@dp.callback_query(lambda c: c.data and c.data.startswith('notif_add:'))
+async def cb_notif_add(callback: types.CallbackQuery):
+    _, gid, amount, unit = callback.data.split(':')
+    gid_i = int(gid)
+    amount_i = int(amount)
+    # Add without custom message (None) and not default
+    NotificationRepo.add_notification(gid_i, amount_i, unit, None, is_default=0)
+    await callback.answer("Добавлено")
+    # Refresh view in place
+    header, markup = build_notifies_ui(gid_i)
+    await set_menu_message(callback.from_user.id, callback.message.chat.id, header, markup)
+
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('notif_del:'))
+async def cb_notif_del(callback: types.CallbackQuery):
+    _, notif_id, gid = callback.data.split(':')
+    NotificationRepo.delete_notification(int(notif_id))
+    await callback.answer("Удалено")
+    # Refresh view in place
+    header, markup = build_notifies_ui(int(gid))
+    await set_menu_message(callback.from_user.id, callback.message.chat.id, header, markup)
+
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('notif_add_free:'))
+async def cb_notif_add_free(callback: types.CallbackQuery):
+    _, gid = callback.data.split(':')
+    gid_i = int(gid)
+    await callback.answer()
+    prompt = await callback.message.answer(
+        "Введите срок до мероприятия (пример: '1 неделя', '2 дня', '1 день и 3 часа', '40 минут', '1 час 6 минут')"
+    )
+    AWAITING_NOTIF_ADD[callback.from_user.id] = {
+        'gid': gid_i,
+        'edit_chat_id': callback.message.chat.id,
+        'edit_message_id': callback.message.message_id,
+        'prompt_message_id': prompt.message_id,
+    }
+
+
+@dp.message()
+async def on_freeform_input(message: types.Message):
+    # Обрабатываем произвольный ввод для добавления оповещений
+    uid = message.from_user.id
+    # 1) Ожидание произвольного срока для уведомлений
+    ctx = AWAITING_NOTIF_ADD.get(uid)
+    if ctx is not None:
+        text = (message.text or '').strip()
+        minutes = parse_duration_ru(text)
+        if minutes <= 0:
+            await message.answer("Не удалось распознать срок. Попробуйте снова, например: '2 дня', '1 день 3 часа', '45 минут'")
+            return
+        gid = ctx['gid']
+        NotificationRepo.add_notification(gid, minutes, 'minutes', None, is_default=0)
+        # Обновляем исходное сообщение с меню
+        header, markup = build_notifies_ui(gid)
+        try:
+            await bot.edit_message_text(header, chat_id=ctx['edit_chat_id'], message_id=ctx['edit_message_id'], reply_markup=markup)
+        except Exception:
+            pass
+        # Удаляем подсказку и ввод пользователя
+        try:
+            await bot.delete_message(chat_id=ctx['edit_chat_id'], message_id=ctx['prompt_message_id'])
+        except Exception:
+            pass
+        try:
+            await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+        except Exception:
+            pass
+        # Очистить ожидание
+        AWAITING_NOTIF_ADD.pop(uid, None)
+        return
+
+    # 2) Ожидания для создания/назначения мероприятия
+    ectx = AWAITING_EVENT_CREATE.get(uid)
+    if ectx is not None:
+        mode = ectx.get('mode')
+        if mode == 'create':
+            step = ectx.get('step')
+            if step == 'name':
+                ectx['name'] = (message.text or '').strip()
+                ectx['step'] = 'time'
+                # rewrite prompt to next step and delete user's message
+                try:
+                    await bot.edit_message_text("Введите дату/время мероприятия (свободный формат)", chat_id=ectx['edit_chat_id'], message_id=ectx['prompt_message_id'])
+                except Exception:
+                    pass
+                try:
+                    await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+                except Exception:
+                    pass
+                return
+            elif step == 'time':
+                raw_time = (message.text or '').strip()
+                gid = ectx['gid']
+                # parse russian datetime
+                dt = parse_ru_datetime(raw_time)
+                if not dt:
+                    # keep prompt, ask again
+                    try:
+                        await bot.edit_message_text("Не понял дату/время. Примеры: '22 сентября 8 утра', '22/09/2025 11 часов'", chat_id=ectx['edit_chat_id'], message_id=ectx['prompt_message_id'])
+                    except Exception:
+                        pass
+                    try:
+                        await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+                    except Exception:
+                        pass
+                    return
+                time_store = dt.strftime('%Y-%m-%d %H:%M:%S')
+                event_id = EventRepo.create(gid, ectx.get('name','Без названия'), time_store)
+                # Auto-create event notifications based on all group settings
+                EventNotificationRepo.create_from_group_defaults(event_id, gid)
+                # Auto-create personal notifications for all group members based on group settings
+                PersonalEventNotificationRepo.create_from_group_for_all_users(event_id, gid)
+                # refresh events list
+                from aiogram.utils.keyboard import InlineKeyboardBuilder
+                events = EventRepo.list_by_group(gid)
+                kb = InlineKeyboardBuilder()
+                lines = [f"Мероприятия (ID группы {gid})"]
+                if events:
+                    for eid, name, time_str, resp_uid in events:
+                        # format time nicely
+                        time_disp = format_event_time_display(time_str)
+                        if resp_uid:
+                            u = UserRepo.get_by_id(resp_uid)
+                            if u:
+                                _iid, _tid, _uname, _phone, _first, _last = u
+                                if _uname:
+                                    who = f"ответственный: @{_uname}"
+                                elif _first or _last:
+                                    who = f"ответственный: {(_first or '').strip()} {(_last or '').strip()}".strip()
+                                else:
+                                    who = f"ответственный: {_tid}"
+                            else:
+                                who = f"ответственный: {resp_uid}"
+                        else:
+                            who = "без ответственного"
+                        lines.append(f"• {name}\n{time_disp} | {who}")
+                        kb.button(text=f"Открыть: {name}", callback_data=f"evt_open:{eid}:{gid}")
+                    kb.adjust(1)
+                else:
+                    lines.append("Пока нет мероприятий")
+                kb.row(types.InlineKeyboardButton(text="+ Создать", callback_data=f"evt_create:{gid}"))
+                kb.row(types.InlineKeyboardButton(text="⬅️ Назад", callback_data=f"grp_menu:{gid}"))
+                try:
+                    await bot.edit_message_text("\n".join(lines), chat_id=ectx['edit_chat_id'], message_id=ectx['edit_message_id'], reply_markup=kb.as_markup())
+                except Exception:
+                    pass
+                # Cleanup prompt and user input
+                try:
+                    await bot.delete_message(chat_id=ectx['edit_chat_id'], message_id=ectx['prompt_message_id'])
+                except Exception:
+                    pass
+                try:
+                    await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+                except Exception:
+                    pass
+                AWAITING_EVENT_CREATE.pop(uid, None)
+                return
+        elif mode == 'assign':
+            val = (message.text or '').strip()
+            user_row = None
+            if val.startswith('@'):
+                user_row = UserRepo.get_by_username(val)
+            else:
+                try:
+                    tid = int(val)
+                except ValueError:
+                    tid = None
+                if tid is not None:
+                    user_row = UserRepo.get_by_telegram_id(tid)
+            if not user_row:
+                # delete user's input and update prompt to retry
+                try:
+                    await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+                except Exception:
+                    pass
+                try:
+                    await bot.edit_message_text("Пользователь не найден. Введите @username или ID Telegram ещё раз", chat_id=ectx['edit_chat_id'], message_id=ectx['prompt_message_id'])
+                except Exception:
+                    pass
+                return
+            user_id_internal = user_row[0]
+            EventRepo.set_responsible(ectx['eid'], user_id_internal)
+            # refresh event view
+            ev = EventRepo.get_by_id(ectx['eid'])
+            if ev:
+                _id, name, time_str, group_id, resp_uid = ev
+                from aiogram.utils.keyboard import InlineKeyboardBuilder
+                kb = InlineKeyboardBuilder()
+                # Role of current user
+                urow2 = UserRepo.get_by_telegram_id(message.from_user.id)
+                internal_user_id2 = urow2[0] if urow2 else None
+                role2 = RoleRepo.get_user_role(internal_user_id2, group_id) if internal_user_id2 is not None else None
+                # Admin controls
+                if role2 in ("owner", "admin") or message.from_user.id == SUPERADMIN_ID:
+                    kb.row(
+                        types.InlineKeyboardButton(text="✏️ Переименовать", callback_data=f"evt_rename:{_id}:{group_id}"),
+                        types.InlineKeyboardButton(text="🕒 Изм. дату/время", callback_data=f"evt_retime:{_id}:{group_id}")
+                    )
+                    kb.row(
+                        types.InlineKeyboardButton(text="Назначить ответственного", callback_data=f"evt_assign:{_id}:{group_id}"),
+                        types.InlineKeyboardButton(text="🗑 Удалить", callback_data=f"evt_delete:{_id}:{group_id}")
+                    )
+                # Booking controls
+                if not resp_uid:
+                    kb.row(types.InlineKeyboardButton(text="Забронировать", callback_data=f"evt_book_toggle:{_id}:{group_id}"))
+                else:
+                    if internal_user_id2 is not None and (internal_user_id2 == resp_uid or role2 in ("owner", "admin") or message.from_user.id == SUPERADMIN_ID):
+                        kb.row(types.InlineKeyboardButton(text="❌ Убрать ответственного", callback_data=f"evt_unassign:{_id}:{group_id}"))
+                # Group notifications for admins
+                if internal_user_id2 and can_edit_event_notifications(internal_user_id2, _id):
+                    kb.row(types.InlineKeyboardButton(text="🔔 Групповые оповещения", callback_data=f"evt_notifications:{_id}:{group_id}"))
+                # Personal notifications for responsible OR owner/admin/superadmin
+                if internal_user_id2 and (
+                    (resp_uid and internal_user_id2 == resp_uid)
+                    or (role2 in ("owner", "admin") or message.from_user.id == SUPERADMIN_ID)
+                ):
+                    kb.row(types.InlineKeyboardButton(text="📱 Личные оповещения", callback_data=f"evt_personal_notifications:{_id}:{group_id}"))
+                kb.row(types.InlineKeyboardButton(text="⬅️ Назад", callback_data=f"grp_events:{group_id}"))
+                if resp_uid:
+                    u = UserRepo.get_by_id(resp_uid)
+                    if u:
+                        _iid, _tid, _uname, _phone, _first, _last = u
+                        if _uname:
+                            resp_text2 = f"@{_uname}"
+                        elif _first or _last:
+                            resp_text2 = f"{(_first or '').strip()} {(_last or '').strip()}".strip()
+                        else:
+                            resp_text2 = str(_tid)
+                    else:
+                        resp_text2 = str(resp_uid)
+                else:
+                    resp_text2 = 'не назначен'
+                text = f"{name}\nВремя: {time_str}\nОтветственный: {resp_text2}"
+                try:
+                    await bot.edit_message_text(text, chat_id=ectx['edit_chat_id'], message_id=ectx['edit_message_id'], reply_markup=kb.as_markup())
+                except Exception:
+                    pass
+            # Cleanup prompt and user input
+            try:
+                await bot.delete_message(chat_id=ectx['edit_chat_id'], message_id=ectx['prompt_message_id'])
+            except Exception:
+                pass
+            try:
+                await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+            except Exception:
+                pass
+            AWAITING_EVENT_CREATE.pop(uid, None)
+            return
+
+    # 3) Ожидания для добавления администраторов
+    actx = AWAITING_ADMIN_INPUT.get(uid)
+    if actx is not None:
+        gid = actx['gid']
+        mode = actx['mode']
+        if mode == 'add':
+            id_type = actx['type']
+            value = (message.text or '').strip()
+            if id_type == 'id':
+                try:
+                    int(value)
+                except ValueError:
+                    await message.answer("Ожидался числовой ID")
+                    return
+                # Всегда добавляем как ожидающего, даже если пользователя нет в базе
+                creator_row = UserRepo.get_by_telegram_id(uid)
+                created_by = creator_row[0] if creator_row else None
+                RoleRepo.add_pending_admin(gid, value, 'id', created_by_user=created_by or 0)
+            elif id_type == 'username':
+                if not value.startswith('@'):
+                    await message.answer("Ожидался @username")
+                    return
+                creator_row = UserRepo.get_by_telegram_id(uid)
+                created_by = creator_row[0] if creator_row else None
+                RoleRepo.add_pending_admin(gid, value.lstrip('@'), 'username', created_by_user=created_by or 0)
+            else:
+                creator_row = UserRepo.get_by_telegram_id(uid)
+                created_by = creator_row[0] if creator_row else None
+                RoleRepo.add_pending_admin(gid, value, 'phone', created_by_user=created_by or 0)
+            # refresh admins view
+            try:
+                await bot.delete_message(chat_id=actx['edit_chat_id'], message_id=actx['prompt_message_id'])
+            except Exception:
+                pass
+            try:
+                await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+            except Exception:
+                pass
+            # show updated admins without constructing fake Message/CallbackQuery
+            header, markup = build_admins_ui(gid)
+            try:
+                await bot.edit_message_text(header, chat_id=actx['edit_chat_id'], message_id=actx['edit_message_id'], reply_markup=markup)
+            except Exception:
+                pass
+            AWAITING_ADMIN_INPUT.pop(uid, None)
+            return
+
+    # 4) Обработка контакта для подтверждения по телефону
+    if message.contact and message.from_user and message.contact.user_id == message.from_user.id:
+        phone = message.contact.phone_number
+        # Обновим телефон юзера и попробуем подтвердить доступы
+        urow = UserRepo.get_by_telegram_id(message.from_user.id)
+        if urow:
+            UserRepo.update_phone(urow[0], phone)
+            groups = RoleRepo.find_groups_for_pending(telegram_id=None, username=None, phone=phone)
+            for gid in groups:
+                RoleRepo.confirm_admin_if_pending(urow[0], gid)
+            if groups:
+                await message.answer(
+                    f"Телефон получен. Ваш доступ админа подтвержден в группах: {', '.join(map(str, groups))}",
+                    reply_markup=ReplyKeyboardRemove(),
+                )
+            else:
+                await message.answer("Телефон получен, но неподтвержденных доступов не найдено.", reply_markup=ReplyKeyboardRemove())
+        else:
+            await message.answer("Спасибо, получили телефон.", reply_markup=ReplyKeyboardRemove())
+
+    # 5) Ожидания редактирования мероприятия (переименование / изменение времени)
+    eedit = AWAITING_EVENT_EDIT.get(uid)
+    if eedit is not None:
+        mode = eedit['mode']
+        eid = eedit['eid']
+        gid = eedit['gid']
+        if mode == 'rename':
+            new_name = (message.text or '').strip()
+            if not new_name:
+                try:
+                    await bot.edit_message_text("Название не может быть пустым. Введите новое название.", chat_id=eedit['edit_chat_id'], message_id=eedit['prompt_message_id'])
+                except Exception:
+                    pass
+                try:
+                    await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+                except Exception:
+                    pass
+                return
+            EventRepo.update_name(eid, new_name)
+            # refresh card directly
+            ev = EventRepo.get_by_id(eid)
+            if ev:
+                _id, name, time_str, group_id, resp_uid = ev
+                from aiogram.utils.keyboard import InlineKeyboardBuilder
+                kb = InlineKeyboardBuilder()
+                # Role of current user
+                urow2 = UserRepo.get_by_telegram_id(message.from_user.id)
+                internal_user_id2 = urow2[0] if urow2 else None
+                role2 = RoleRepo.get_user_role(internal_user_id2, gid) if internal_user_id2 is not None else None
+                # Admin controls
+                if role2 in ("owner", "admin") or message.from_user.id == SUPERADMIN_ID:
+                    kb.row(
+                        types.InlineKeyboardButton(text="✏️ Переименовать", callback_data=f"evt_rename:{eid}:{gid}"),
+                        types.InlineKeyboardButton(text="🕒 Изм. дату/время", callback_data=f"evt_retime:{eid}:{gid}")
+                    )
+                    kb.row(
+                        types.InlineKeyboardButton(text="Назначить ответственного", callback_data=f"evt_assign:{eid}:{gid}"),
+                        types.InlineKeyboardButton(text="🗑 Удалить", callback_data=f"evt_delete:{eid}:{gid}")
+                    )
+                # Booking controls
+                if not resp_uid:
+                    kb.row(types.InlineKeyboardButton(text="Забронировать", callback_data=f"evt_book_toggle:{eid}:{gid}"))
+                else:
+                    if internal_user_id2 is not None and (internal_user_id2 == resp_uid or role2 in ("owner", "admin") or message.from_user.id == SUPERADMIN_ID):
+                        kb.row(types.InlineKeyboardButton(text="❌ Убрать ответственного", callback_data=f"evt_unassign:{eid}:{gid}"))
+                # Group notifications for admins
+                if internal_user_id2 and can_edit_event_notifications(internal_user_id2, eid):
+                    kb.row(types.InlineKeyboardButton(text="🔔 Групповые оповещения", callback_data=f"evt_notifications:{eid}:{gid}"))
+                # Personal notifications for responsible OR owner/admin/superadmin
+                if internal_user_id2 and (
+                    (resp_uid and internal_user_id2 == resp_uid)
+                    or (role2 in ("owner", "admin") or message.from_user.id == SUPERADMIN_ID)
+                ):
+                    kb.row(types.InlineKeyboardButton(text="📱 Личные оповещения", callback_data=f"evt_personal_notifications:{eid}:{gid}"))
+                kb.row(types.InlineKeyboardButton(text="⬅️ Назад", callback_data=f"grp_events:{gid}"))
+                # Personal notifications for responsible OR owner/admin/superadmin
+                urow2 = UserRepo.get_by_telegram_id(message.from_user.id)
+                internal_user_id2 = urow2[0] if urow2 else None
+                role2 = RoleRepo.get_user_role(internal_user_id2, gid) if internal_user_id2 is not None else None
+                if internal_user_id2 and (
+                    (resp_uid and internal_user_id2 == resp_uid)
+                    or (role2 in ("owner", "admin") or message.from_user.id == SUPERADMIN_ID)
+                ):
+                    kb.row(types.InlineKeyboardButton(text="📱 Личные оповещения", callback_data=f"evt_personal_notifications:{eid}:{gid}"))
+                # Personal notifications for responsible OR owner/admin/superadmin
+                urow2 = UserRepo.get_by_telegram_id(message.from_user.id)
+                internal_user_id2 = urow2[0] if urow2 else None
+                role2 = RoleRepo.get_user_role(internal_user_id2, gid) if internal_user_id2 is not None else None
+                if internal_user_id2 and (
+                    (resp_uid and internal_user_id2 == resp_uid)
+                    or (role2 in ("owner", "admin") or message.from_user.id == SUPERADMIN_ID)
+                ):
+                    kb.row(types.InlineKeyboardButton(text="📱 Личные оповещения", callback_data=f"evt_personal_notifications:{eid}:{gid}"))
+                if resp_uid:
+                    u = UserRepo.get_by_id(resp_uid)
+                    if u:
+                        _iid, _tid, _uname, _phone, _first, _last = u
+                        if _uname:
+                            resp_text = f"@{_uname}"
+                        elif _first or _last:
+                            resp_text = f"{(_first or '').strip()} {(_last or '').strip()}".strip()
+                        else:
+                            resp_text = str(_tid)
+                    else:
+                        resp_text = str(resp_uid)
+                else:
+                    resp_text = 'не назначен'
+                text = f"{name}\nВремя: {format_event_time_display(time_str)}\nОтветственный: {resp_text}"
+                try:
+                    await bot.edit_message_text(text, chat_id=eedit['edit_chat_id'], message_id=eedit['edit_message_id'], reply_markup=kb.as_markup())
+                except Exception:
+                    pass
+            # cleanup
+            try:
+                await bot.delete_message(chat_id=eedit['edit_chat_id'], message_id=eedit['prompt_message_id'])
+            except Exception:
+                pass
+            try:
+                await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+            except Exception:
+                pass
+            AWAITING_EVENT_EDIT.pop(uid, None)
+            return
+        elif mode == 'retime':
+            raw = (message.text or '').strip()
+            # Try explicit formats first
+            dt = None
+            for fmt in ("%d.%m.%Y %H:%M:%S", "%d.%m.%Y %H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+                try:
+                    dt = datetime.strptime(raw, fmt)
+                    break
+                except Exception:
+                    pass
+            if not dt:
+                dt = parse_ru_datetime(raw)
+            if not dt:
+                try:
+                    await bot.edit_message_text("Не понял дату/время. Примеры: '22 сентября 8 утра', '15.09.2025 00:00'", chat_id=eedit['edit_chat_id'], message_id=eedit['prompt_message_id'])
+                except Exception:
+                    pass
+                try:
+                    await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+                except Exception:
+                    pass
+                return
+            EventRepo.update_time(eid, dt.strftime('%Y-%m-%d %H:%M:%S'))
+            # refresh card directly
+            ev = EventRepo.get_by_id(eid)
+            if ev:
+                _id, name, time_str, group_id, resp_uid = ev
+                from aiogram.utils.keyboard import InlineKeyboardBuilder
+                kb = InlineKeyboardBuilder()
+                kb.row(
+                    types.InlineKeyboardButton(text="🗑 Удалить", callback_data=f"evt_delete:{eid}:{gid}"),
+                    types.InlineKeyboardButton(text="Назначить ответственного", callback_data=f"evt_assign:{eid}:{gid}")
+                )
+                kb.row(
+                    types.InlineKeyboardButton(text="✏️ Переименовать", callback_data=f"evt_rename:{eid}:{gid}"),
+                    types.InlineKeyboardButton(text="🕒 Изм. дату/время", callback_data=f"evt_retime:{eid}:{gid}")
+                )
+                if resp_uid:
+                    kb.row(
+                        types.InlineKeyboardButton(text="❌ Убрать ответственного", callback_data=f"evt_unassign:{eid}:{gid}")
+                    )
+                kb.row(types.InlineKeyboardButton(text="⬅️ Назад", callback_data=f"grp_events:{gid}"))
+                if resp_uid:
+                    u = UserRepo.get_by_id(resp_uid)
+                    if u:
+                        _iid, _tid, _uname, _phone, _first, _last = u
+                        if _uname:
+                            resp_text = f"@{_uname}"
+                        elif _first or _last:
+                            resp_text = f"{(_first or '').strip()} {(_last or '').strip()}".strip()
+                        else:
+                            resp_text = str(_tid)
+                    else:
+                        resp_text = str(resp_uid)
+                else:
+                    resp_text = 'не назначен'
+                text = f"{name}\nВремя: {format_event_time_display(time_str)}\nОтветственный: {resp_text}"
+                try:
+                    await bot.edit_message_text(text, chat_id=eedit['edit_chat_id'], message_id=eedit['edit_message_id'], reply_markup=kb.as_markup())
+                except Exception:
+                    pass
+            # cleanup
+            try:
+                await bot.delete_message(chat_id=eedit['edit_chat_id'], message_id=eedit['prompt_message_id'])
+            except Exception:
+                pass
+            try:
+                await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+            except Exception:
+                pass
+            AWAITING_EVENT_EDIT.pop(uid, None)
+            return
+
+    # 4) Ожидания для добавления оповещений мероприятия
+    enctx = AWAITING_EVENT_NOTIF.get(uid)
+    if enctx is not None:
+        text = (message.text or '').strip()
+        # Try relative duration first
+        minutes = parse_duration_ru(text)
+        if minutes <= 0:
+            # Try absolute date/time of notification
+            eid = enctx['eid']
+            gid = enctx['gid']
+            ev = EventRepo.get_by_id(eid)
+            if not ev:
+                await message.answer("Мероприятие не найдено")
+                return
+            _id, _name, time_str, _group_id, _resp = ev
+            nt = None
+            for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%d.%m.%Y %H:%M:%S", "%d.%m.%Y %H:%M"):
+                try:
+                    nt = datetime.strptime(text, fmt)
+                    break
+                except Exception:
+                    pass
+            if nt is None:
+                nt = dateparser.parse(text, languages=["ru"], settings={'DATE_ORDER': 'DMY'})
+            if nt is None:
+                await message.answer("Не удалось распознать срок. Укажите, например: '2 дня' или '18.09.2025 22:30'")
+                return
+            # parse event time to compute minutes before
+            evt_dt = None
+            for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%d.%m.%Y %H:%M:%S", "%d.%m.%Y %H:%M"):
+                try:
+                    evt_dt = datetime.strptime(time_str, fmt)
+                    break
+                except Exception:
+                    pass
+            if evt_dt is None:
+                evt_dt = dateparser.parse(time_str, languages=["ru"], settings={'DATE_ORDER': 'DMY'})
+            if evt_dt is None:
+                await message.answer("Не удалось распознать время мероприятия")
+                return
+            delta = evt_dt - nt
+            minutes = int(delta.total_seconds() // 60)
+            if minutes <= 0:
+                await message.answer("Время оповещения должно быть раньше времени мероприятия")
+                return
+        eid = enctx['eid']
+        gid = enctx['gid']
+        EventNotificationRepo.add_notification(eid, minutes, 'minutes', f"Через {format_duration_ru(minutes, 'minutes')} начало мероприятия")
+        # Refresh notifications view (no fake CallbackQuery)
+        urow = UserRepo.get_by_telegram_id(uid)
+        internal_user_id = urow[0] if urow else None
+        if internal_user_id:
+            await refresh_event_notifications_view_ids(enctx['edit_chat_id'], enctx['edit_message_id'], eid, gid, internal_user_id)
+        # Cleanup prompt and user input
+        try:
+            await bot.delete_message(chat_id=enctx['edit_chat_id'], message_id=enctx['prompt_message_id'])
+        except Exception:
+            pass
+        try:
+            await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+        except Exception:
+            pass
+        AWAITING_EVENT_NOTIF.pop(uid, None)
+        return
+
+    # 5) Ожидания для добавления личных напоминаний о мероприятии
+    pnctx = AWAITING_PERSONAL_NOTIF.get(uid)
+    if pnctx is not None:
+        text = (message.text or '').strip()
+        minutes = parse_duration_ru(text)
+        if minutes <= 0:
+            await message.answer("Не удалось распознать срок. Попробуйте снова, например: '2 дня', '1 день 3 часа', '45 минут'")
+            return
+        eid = pnctx['eid']
+        gid = pnctx['gid']
+        
+        # Get user
+        urow = UserRepo.get_by_telegram_id(uid)
+        if not urow:
+            await message.answer("Пользователь не найден")
+            return
+        internal_user_id = urow[0]
+        
+        PersonalEventNotificationRepo.add_notification(internal_user_id, eid, minutes, 'minutes', f"Через {format_duration_ru(minutes, 'minutes')} начало мероприятия")
+        # Refresh personal notifications view (no fake CallbackQuery)
+        await refresh_personal_notifications_view_ids(pnctx['edit_chat_id'], pnctx['edit_message_id'], eid, gid, internal_user_id)
+        # Cleanup prompt and user input
+        try:
+            await bot.delete_message(chat_id=pnctx['edit_chat_id'], message_id=pnctx['prompt_message_id'])
+        except Exception:
+            pass
+        try:
+            await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+        except Exception:
+            pass
+        AWAITING_PERSONAL_NOTIF.pop(uid, None)
+        return
+
+
+def _register_group_if_needed_from_message(message: types.Message) -> None:
+    if message.chat.type not in ("group", "supergroup"):
+        return
+    chat_id = str(message.chat.id)
+    title = message.chat.title or 'Без названия'
+    existing = GroupRepo.get_by_chat_id(chat_id)
+    if existing:
+        return
+    user = message.from_user
+    owner_user_id = UserRepo.upsert_user(
+        telegram_id=user.id,
+        username=user.username,
+        phone=None,
+        first_name=user.first_name,
+        last_name=user.last_name,
+    )
+    group_id = GroupRepo.create(chat_id, title, owner_user_id)
+    RoleRepo.add_role(owner_user_id, group_id, 'owner', confirmed=True)
+    # Add superadmin to the group as superadmin
+    try:
+        sa_row = UserRepo.get_by_telegram_id(SUPERADMIN_ID)
+        if sa_row:
+            RoleRepo.add_role(sa_row[0], group_id, 'superadmin', confirmed=True)
+    except Exception:
+        pass
+    NotificationRepo.ensure_defaults(group_id)
+    logging.info(f"Auto-registered group {chat_id} by message from user {user.id}")
+
+# --- Generic logging handlers + auto-register on first message ---
+@dp.message()
+async def log_any_message(message: types.Message):
+    logging.info(
+        f"message: chat_type={message.chat.type}, chat_id={message.chat.id}, user_id={message.from_user.id}, "
+        f"username={message.from_user.username}, text={message.text!r}"
+    )
+    try:
+        _register_group_if_needed_from_message(message)
     except Exception as e:
-        print(f"Не удалось отправить напоминание в группу {group_id}: {e}")
+        logging.exception(f"Failed to auto-register group from message: {e}")
+
+@dp.chat_member()
+async def log_chat_member(event: ChatMemberUpdated):
+    logging.info(
+        f"chat_member: chat_id={event.chat.id}, actor_id={getattr(event.from_user,'id',None)}, "
+        f"old_status={getattr(event.old_chat_member,'status',None)}, new_status={event.new_chat_member.status}"
+    )
+
+@dp.callback_query()
+async def log_callback(callback: types.CallbackQuery):
+    logging.info(
+        f"callback: chat_id={callback.message.chat.id if callback.message else None}, user_id={callback.from_user.id}, data={callback.data}"
+    )
+
 
 async def main():
-    # Создаем и запускаем планировщик
+    from database.init_db import init_db
+    init_db()
+    # Start scheduler for notifications
+    try:
+        from apscheduler.schedulers.asyncio import AsyncIOScheduler
+    except Exception:
+        # APScheduler might not be installed; skip silently
+        await dp.start_polling(bot)
+        return
+
+    scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
+
+    async def tick_send_due():
+        msk = ZoneInfo("Europe/Moscow")
+        now = datetime.now(msk)
+        now_iso = now.strftime('%Y-%m-%d %H:%M:%S')
+        # Scan upcoming events in next 2 days to compute due notifications
+        # (simple approach; can be optimized with SQL later)
+        for gid_row in range(1):
+            pass
+        # Load all events
+        # We don't have a repo to list all events; reuse groups and list_by_group
+        # Iterate groups
+        groups = []
+        try:
+            # Fetch all groups
+            from services.repositories import get_conn
+            with get_conn() as conn:
+                cur = conn.cursor()
+                cur.execute("SELECT id, telegram_chat_id FROM groups")
+                groups = cur.fetchall()
+        except Exception:
+            groups = []
+        for gid, chat_id in groups:
+            events = EventRepo.list_by_group(gid)
+            for eid, name, time_str, resp_uid in events:
+                try:
+                    evt_dt = datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S').replace(tzinfo=msk)
+                except Exception:
+                    continue
+                # Event notifications (group-level sends)
+                for _, time_before, time_unit, message_text in EventNotificationRepo.list_by_event(eid):
+                    # compute notify time
+                    delta_minutes = 0
+                    if time_unit == 'minutes':
+                        delta_minutes = time_before
+                    elif time_unit == 'hours':
+                        delta_minutes = time_before * 60
+                    elif time_unit == 'days':
+                        delta_minutes = time_before * 1440
+                    elif time_unit == 'weeks':
+                        delta_minutes = time_before * 10080
+                    elif time_unit == 'months':
+                        delta_minutes = time_before * 43200
+                    notify_dt = evt_dt - timedelta(minutes=delta_minutes)
+                    # if it's due within the last minute window
+                    if notify_dt <= now < notify_dt + timedelta(minutes=1):
+                        if not DispatchLogRepo.was_sent('event', user_id=None, group_id=gid, event_id=eid, time_before=time_before, time_unit=time_unit):
+                            # Build group message per spec
+                            resp_label = None
+                            if resp_uid:
+                                u = UserRepo.get_by_id(resp_uid)
+                                if u:
+                                    _iid, _tid, _uname, _phone, _first, _last = u
+                                    if _uname:
+                                        resp_label = f"@{_uname}"
+                                    elif _first or _last:
+                                        resp_label = f"{(_first or '').strip()} {(_last or '').strip()}".strip()
+                                    else:
+                                        resp_label = str(_tid)
+                                else:
+                                    resp_label = str(resp_uid)
+                            lines = [
+                                f"Напоминание по мероприятию \"{name}\".",
+                                f"{format_event_time_display(time_str)}",
+                            ]
+                            if resp_label:
+                                lines.append(f"Ответственный - {resp_label}")
+                            else:
+                                lines.append("Ответственный еще не назначен")
+                            text = "\n".join(lines)
+                            # Include booking button
+                            from aiogram.utils.keyboard import InlineKeyboardBuilder
+                            kb_ev = InlineKeyboardBuilder()
+                            btn_label = resp_label if resp_label else "Забронировать"
+                            kb_ev.row(types.InlineKeyboardButton(text=btn_label, callback_data=f"evt_book_toggle:{eid}:{gid}"))
+                            try:
+                                await bot.send_message(int(chat_id), text, reply_markup=kb_ev.as_markup())
+                            except Exception:
+                                try:
+                                    await bot.send_message(chat_id, text, reply_markup=kb_ev.as_markup())
+                                except Exception:
+                                    pass
+                            DispatchLogRepo.mark_sent('event', user_id=None, group_id=gid, event_id=eid, time_before=time_before, time_unit=time_unit)
+                # Personal notifications (DM to users)
+                from services.repositories import get_conn
+                with get_conn() as conn:
+                    cur = conn.cursor()
+                    cur.execute("SELECT user_id, time_before, time_unit, message_text FROM personal_event_notifications WHERE event_id = ?", (eid,))
+                    personals = cur.fetchall()
+                for user_id, time_before, time_unit, message_text in personals:
+                    # compute notify time
+                    delta_minutes = 0
+                    if time_unit == 'minutes':
+                        delta_minutes = time_before
+                    elif time_unit == 'hours':
+                        delta_minutes = time_before * 60
+                    elif time_unit == 'days':
+                        delta_minutes = time_before * 1440
+                    elif time_unit == 'weeks':
+                        delta_minutes = time_before * 10080
+                    elif time_unit == 'months':
+                        delta_minutes = time_before * 43200
+                    notify_dt = evt_dt - timedelta(minutes=delta_minutes)
+                    if notify_dt <= now < notify_dt + timedelta(minutes=1):
+                        if not DispatchLogRepo.was_sent('personal', user_id=user_id, group_id=None, event_id=eid, time_before=time_before, time_unit=time_unit):
+                            u = UserRepo.get_by_id(user_id)
+                            if u:
+                                _iid, _tid, _uname, _phone, _first, _last = u
+                                # Build personal message per spec
+                                grp_row = GroupRepo.get_by_id(gid)
+                                group_title = grp_row[2] if grp_row else f"Группа {gid}"
+                                text = (
+                                    f"Напоминание в группе \"{group_title}\" по мероприятию \"{name}\", где вы являетесь ответственным.\n"
+                                    f"Начало мероприятия - {format_event_time_display(time_str)}"
+                                )
+                                try:
+                                    await bot.send_message(_tid, text)
+                                    DispatchLogRepo.mark_sent('personal', user_id=user_id, group_id=None, event_id=eid, time_before=time_before, time_unit=time_unit)
+                                except Exception:
+                                    pass
+
+    scheduler.add_job(tick_send_due, 'interval', minutes=1, id='notify_tick')
     scheduler.start()
-    await update_notifications()
     await dp.start_polling(bot)
 
-if __name__ == "__main__":
+
+if __name__ == '__main__':
     asyncio.run(main())

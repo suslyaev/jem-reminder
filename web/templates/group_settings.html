@@ -1,0 +1,308 @@
+<!doctype html>
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Настройки — {{ group[2] if group else '' }}</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <style>
+      .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+      .tab-btn { padding: 8px 16px; border: 1px solid var(--border); background: var(--card); color: var(--text); border-radius: 8px; cursor: pointer; }
+      .tab-btn.active { background: var(--btn); color: #fff; }
+      .tab-content { display: block; }
+      .tab-content.hidden { display: none; }
+      
+      .modal { position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); }
+      .modal-content { background-color: #1f2937 !important; margin: 15% auto; padding: 0; border-radius: 8px; width: 90%; max-width: 450px; box-shadow: 0 4px 12px rgba(0,0,0,0.5) !important; opacity: 1 !important; }
+      .modal-header { padding: 16px 20px; border-bottom: 1px solid #374151 !important; display: flex; justify-content: space-between; align-items: center; }
+      .modal-header h3 { margin: 0; color: #f9fafb !important; }
+      .close-btn { background: none; border: none; font-size: 24px; cursor: pointer; color: #f9fafb !important; padding: 0; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; }
+      .modal-body { padding: 20px; }
+      .modal-footer { padding: 16px 20px; border-top: 1px solid #374151 !important; display: flex; gap: 8px; justify-content: flex-end; }
+      .message-btn:hover { background: #2563eb !important; }
+      #messageText { width: 300px !important; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <a class="link" href="/group/{{ group[0] }}?tg_id={{ request.query_params.get('tg_id') }}">← К группе</a>
+      <h2>Настройки группы</h2>
+
+      {% if role in ['admin', 'owner', 'superadmin'] %}
+        {% if pending %}
+          <h3>Ожидающие подтверждения админы</h3>
+          <ul class="list">
+            {% for pid, identifier, itype, created_by, created_at in pending %}
+              <li class="item">
+                <div class="title">{{ identifier }} <span class="meta">({{ itype }}) - Не подтвержден</span></div>
+                <form method="post" action="/group/{{ group[0] }}/settings/admins/pending/{{ pid }}/delete?tg_id={{ request.query_params.get('tg_id') }}" style="margin-top:6px;">
+                  <button class="btn" type="submit" style="background:#ef4444;">Удалить приглашение</button>
+                </form>
+              </li>
+            {% endfor %}
+          </ul>
+        {% endif %}
+      {% endif %}
+
+      <h3>Участники группы</h3>
+      {% if not members %}
+        <div class="empty">Нет участников</div>
+      {% else %}
+        <ul class="list">
+          {% for uid, tid, username, phone, first_name, last_name, role in members %}
+            <li class="item" style="position: relative;">
+              <div class="title">
+                {% if first_name or last_name %}
+                  {{ (first_name or '') + ' ' + (last_name or '') }}
+                {% elif username %}
+                  @{{ username }}
+                {% else %}
+                  ID: {{ tid }}
+                {% endif %}
+                <span class="meta">({{ role_map.get(role, role.upper()) }})</span>
+              </div>
+              <button class="message-btn" onclick="openMessageModal({{ uid }}, '{{ (first_name or '') + ' ' + (last_name or '') if first_name or last_name else ('@' + username if username else 'ID: ' + tid|string) }}')" style="position: absolute; top: 8px; right: 8px; background: #3b82f6; color: white; border: none; border-radius: 4px; padding: 4px 8px; cursor: pointer; font-size: 12px;">✉️</button>
+              <div class="meta">
+                Telegram ID: {{ tid }}
+                {% if username %} | @{{ username }}{% endif %}
+                {% if phone %} | {{ phone }}{% endif %}
+              </div>
+              <form method="post" action="/group/{{ group[0] }}/settings/member/{{ uid }}/display-name?tg_id={{ request.query_params.get('tg_id') }}" style="margin-top:6px;">
+                <input type="text" name="display_name" placeholder="Отображаемое имя" value="{{ member_display_names.get(uid, '') }}" style="width:300px; margin-bottom:6px;" />
+              </form>
+              <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:6px;">
+                <form method="post" action="/group/{{ group[0] }}/settings/member/{{ uid }}/display-name?tg_id={{ request.query_params.get('tg_id') }}" style="display:inline-block;">
+                  <button class="btn" type="submit">Сохранить имя</button>
+                </form>
+                {% if role in ['admin', 'owner', 'superadmin'] %}
+                  {% if role == 'member' %}
+                    <form method="post" action="/group/{{ group[0] }}/settings/member/{{ uid }}/make-admin?tg_id={{ request.query_params.get('tg_id') }}" style="display:inline-block;">
+                      <button class="btn" type="submit" style="background:#16a34a;">Сделать админом</button>
+                    </form>
+                  {% elif role in ['admin', 'owner'] %}
+                    <form method="post" action="/group/{{ group[0] }}/settings/admins/{{ uid }}/remove?tg_id={{ request.query_params.get('tg_id') }}" style="display:inline-block;">
+                      <button class="btn" type="submit" style="background:#ef4444;">Убрать из админов</button>
+                    </form>
+                  {% endif %}
+                {% endif %}
+              </div>
+            </li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+
+      {% if role in ['admin', 'owner', 'superadmin'] %}
+        <h3>Добавить админа</h3>
+        <form method="post" action="/group/{{ group[0] }}/settings/admins/pending/add?tg_id={{ request.query_params.get('tg_id') }}">
+          <select name="identifier_type" style="width:100%; margin-bottom:6px;">
+            <option value="id">Telegram ID</option>
+            <option value="username">username</option>
+            <option value="phone">телефон</option>
+          </select>
+          <input type="text" name="identifier" placeholder="Значение" required style="width:335px; margin-bottom:6px;" />
+          <button class="btn" type="submit">Создать</button>
+        </form>
+      {% endif %}
+
+      <h3>Оповещения</h3>
+      <div class="tabs" style="margin-bottom: 16px;">
+        <button class="tab-btn active" onclick="switchTab('group')" id="group-tab">Групповые</button>
+        {% if role in ['admin', 'owner', 'superadmin'] %}
+          <button class="tab-btn" onclick="switchTab('personal')" id="personal-tab">Личные</button>
+        {% endif %}
+      </div>
+
+      <div id="group-notifications" class="tab-content">
+        {% if role in ['admin', 'owner', 'superadmin'] %}
+          {% if not notifications %}
+            <div class="empty">Пока нет групповых оповещений</div>
+          {% else %}
+          <ul class="list">
+            {% for nid, time_before, time_unit, message_text, is_default in notifications %}
+              <li class="item" style="position: relative;">
+                <div class="title">
+                  {% set unit_map = {
+                    'days': ['день', 'дня', 'дней'],
+                    'hours': ['час', 'часа', 'часов'],
+                    'minutes': ['минута', 'минуты', 'минут'],
+                    'weeks': ['неделя', 'недели', 'недель'],
+                    'months': ['месяц', 'месяца', 'месяцев']
+                  } %}
+                  {% set forms = unit_map.get(time_unit, ['', '', '']) %}
+                  {% if time_before == 1 %}
+                    {{ time_before }} {{ forms[0] }}
+                  {% elif time_before in [2, 3, 4] %}
+                    {{ time_before }} {{ forms[1] }}
+                  {% else %}
+                    {{ time_before }} {{ forms[2] }}
+                  {% endif %}
+                </div>
+                
+                <form method="post" action="/group/{{ group[0] }}/settings/notifications/{{ nid }}/delete?tg_id={{ request.query_params.get('tg_id') }}" style="position: absolute; top: 8px; right: 8px;">
+                  <button type="submit" style="background: #ef4444; color: white; border: none; border-radius: 4px; padding: 4px 8px; cursor: pointer; font-size: 12px;">✕</button>
+                </form>
+              </li>
+            {% endfor %}
+          </ul>
+          {% endif %}
+
+          <h4>Добавить групповое оповещение</h4>
+          <form method="post" action="/group/{{ group[0] }}/settings/notifications/add-text?tg_id={{ request.query_params.get('tg_id') }}">
+            <input type="text" name="notification_text" placeholder="Например: за 1 день, за 2 часа, за 30 минут напомнить о встрече" required style="width:335px; margin-bottom:6px;" />
+            <button class="btn" type="submit">Добавить</button>
+          </form>
+        {% else %}
+          <div class="empty">Групповые оповещения доступны только админам</div>
+        {% endif %}
+      </div>
+
+      <div id="personal-notifications" class="tab-content" style="display: none;">
+        {% if not personal_notifications %}
+          <div class="empty">Пока нет личных оповещений</div>
+        {% else %}
+          <ul class="list">
+            {% for nid, time_before, time_unit, message_text in personal_notifications %}
+              <li class="item" style="position: relative;">
+                <div class="title">
+                  {% set unit_map = {
+                    'days': ['день', 'дня', 'дней'],
+                    'hours': ['час', 'часа', 'часов'],
+                    'minutes': ['минута', 'минуты', 'минут'],
+                    'weeks': ['неделя', 'недели', 'недель'],
+                    'months': ['месяц', 'месяца', 'месяцев']
+                  } %}
+                  {% set forms = unit_map.get(time_unit, ['', '', '']) %}
+                  {% if time_before == 1 %}
+                    {{ time_before }} {{ forms[0] }}
+                  {% elif time_before in [2, 3, 4] %}
+                    {{ time_before }} {{ forms[1] }}
+                  {% else %}
+                    {{ time_before }} {{ forms[2] }}
+                  {% endif %}
+                </div>
+                
+                <form method="post" action="/group/{{ group[0] }}/settings/personal-notifications/{{ nid }}/delete?tg_id={{ request.query_params.get('tg_id') }}" style="position: absolute; top: 8px; right: 8px;">
+                  <button type="submit" style="background: #ef4444; color: white; border: none; border-radius: 4px; padding: 4px 8px; cursor: pointer; font-size: 12px;">✕</button>
+                </form>
+              </li>
+            {% endfor %}
+          </ul>
+        {% endif %}
+
+        <h4>Добавить личное оповещение</h4>
+        <form method="post" action="/group/{{ group[0] }}/settings/personal-notifications/add-text?tg_id={{ request.query_params.get('tg_id') }}">
+          <input type="text" name="notification_text" placeholder="Например: за 1 день, за 2 часа, за 30 минут напомнить о встрече" required style="width:335px; margin-bottom:6px;" />
+          <button class="btn" type="submit">Добавить</button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Message Modal -->
+    <div id="messageModal" class="modal" style="display: none;">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3 id="modalRecipient">Кому: </h3>
+          <button class="close-btn" onclick="closeMessageModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+          <textarea id="messageText" placeholder="Введите сообщение..." rows="4" style="width: 100%; padding: 8px; border: 1px solid #374151 !important; border-radius: 4px; resize: vertical; font-family: inherit; background: #1f2937 !important; color: #f9fafb !important;"></textarea>
+        </div>
+        <div class="modal-footer">
+          <button class="btn" onclick="sendMessage()" style="background: #3b82f6;">Отправить</button>
+          <button class="btn" onclick="closeMessageModal()" style="background: #6b7280;">Отмена</button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      (function(){
+        const url = new URL(window.location.href);
+        const ok = url.searchParams.get('ok');
+        if (ok) {
+          const map = { name_saved: 'Имя сохранено', member_name_saved: 'Имя участника сохранено', member_made_admin: 'Участник добавлен в ожидающие админы', notification_added: 'Групповое оповещение добавлено', personal_notification_added: 'Личное оповещение добавлено', personal_notification_deleted: 'Личное оповещение удалено', parse_error: 'Ошибка парсинга. Используйте формат: за 1 день, за 2 часа и т.д.', method_error: 'Ошибка: форма отправлена неправильным методом' };
+          if (map[ok]) {
+            alert(map[ok]);
+            url.searchParams.delete('ok');
+            window.history.replaceState({}, '', url.toString());
+          }
+        }
+      })();
+      
+      function switchTab(tabName) {
+        // Hide all tab contents
+        document.querySelectorAll('.tab-content').forEach(content => {
+          content.style.display = 'none';
+        });
+        
+        // Remove active class from all buttons
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+          btn.classList.remove('active');
+        });
+        
+        // Show selected tab content
+        document.getElementById(tabName + '-notifications').style.display = 'block';
+        
+        // Add active class to selected button
+        document.getElementById(tabName + '-tab').classList.add('active');
+      }
+
+      let currentRecipientId = null;
+
+      function openMessageModal(userId, userName) {
+        currentRecipientId = userId;
+        document.getElementById('modalRecipient').textContent = 'Кому: ' + userName;
+        document.getElementById('messageText').value = '';
+        document.getElementById('messageModal').style.display = 'block';
+        document.getElementById('messageText').focus();
+      }
+
+      function closeMessageModal() {
+        document.getElementById('messageModal').style.display = 'none';
+        currentRecipientId = null;
+      }
+
+      function sendMessage() {
+        const message = document.getElementById('messageText').value.trim();
+        if (!message) {
+          alert('Введите сообщение');
+          return;
+        }
+        
+        if (!currentRecipientId) {
+          alert('Ошибка: получатель не выбран');
+          return;
+        }
+
+        // Send message via fetch
+        const formData = new FormData();
+        formData.append('recipient_id', currentRecipientId);
+        formData.append('message', message);
+        
+        fetch('/group/{{ group[0] }}/send-message?tg_id={{ request.query_params.get('tg_id') }}', {
+          method: 'POST',
+          body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+          if (data.success) {
+            alert('Сообщение отправлено');
+            closeMessageModal();
+          } else {
+            alert('Ошибка отправки: ' + (data.error || 'Неизвестная ошибка'));
+          }
+        })
+        .catch(error => {
+          console.error('Error:', error);
+          alert('Ошибка отправки сообщения');
+        });
+      }
+
+      // Close modal when clicking outside
+      window.onclick = function(event) {
+        const modal = document.getElementById('messageModal');
+        if (event.target === modal) {
+          closeMessageModal();
+        }
+      }
+    </script>
+  </body>
+  </html>

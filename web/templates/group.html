@@ -1,0 +1,315 @@
+<!doctype html>
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+    <title>{{ group[2] if group else ('Группа ' ~ group[0]) }}</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <style>
+      .event-card { position: relative; padding: 12px 44px 12px 12px; border-radius: 12px; background: var(--card); margin-bottom: 12px; }
+      .event-card .actions { width: 100%; }
+      .event-head { display:flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+      .event-title { font-weight: 700; font-size: 16px; }
+      .event-date { color: var(--muted); font-size: 14px; }
+      .gear { position:absolute; top: 10px; right: 10px; text-decoration:none; }
+      .row { display: flex; gap: 8px; align-items: center; width: 100%; }
+      .row .name-input { flex: 1 1 auto; min-width: 0; width: 100%; }
+      .row .time-input { flex: 1 1 auto; min-width: 180px; max-width: 220px; width: 100%; }
+      .actions { display:flex; gap:8px; margin-top: 8px; align-items: center; flex-wrap: wrap; }
+      .responsible { color: var(--muted); font-size: 13px; margin-top: 6px; }
+      .select { min-width: 180px; }
+      .toast { padding: 10px 12px; border-radius: 10px; background: #16a34a; color: #fff; margin-bottom: 12px; display:none; }
+      .meta-line { color: var(--muted); font-size: 14px; margin-top: 4px; }
+      .group-header { display: flex; align-items: center; justify-content: space-between; }
+      .group-gear { text-decoration: none; }
+      .row-actions { display:flex; align-items:center; gap:8px; margin-top:6px; }
+      .btn-small { padding: 8px 10px; border-radius: 8px; background: var(--danger); color:#fff; border:0; cursor:pointer; }
+      .autocomplete-container { flex: 1 1 auto; min-width: 180px; position: relative; }
+      .autocomplete-input { width: 100%; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text); font-size: 14px; }
+      .autocomplete-dropdown { position: absolute !important; top: 100% !important; left: 0 !important; right: 0 !important; background: #1f2937 !important; border: 1px solid #374151 !important; border-radius: 8px !important; max-height: 200px !important; overflow-y: auto !important; z-index: 1000 !important; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5) !important; margin-top: 4px !important; opacity: 1 !important; }
+      .autocomplete-option { padding: 10px 12px; cursor: pointer; border-bottom: 1px solid #374151; background: #1f2937 !important; color: #f9fafb !important; }
+      .autocomplete-option:hover { background: #374151 !important; }
+      .autocomplete-option:last-child { border-bottom: none; }
+      
+      .modal { position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); }
+      .modal-content { background-color: #1f2937 !important; margin: 15% auto; padding: 0; border-radius: 8px; width: 90%; max-width: 450px; box-shadow: 0 4px 12px rgba(0,0,0,0.5) !important; opacity: 1 !important; }
+      .modal-header { padding: 16px 20px; border-bottom: 1px solid #374151 !important; display: flex; justify-content: space-between; align-items: center; }
+      .modal-header h3 { margin: 0; color: #f9fafb !important; }
+      .close-btn { background: none; border: none; font-size: 24px; cursor: pointer; color: #f9fafb !important; padding: 0; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; }
+      .modal-body { padding: 20px; }
+      .modal-footer { padding: 16px 20px; border-top: 1px solid #374151 !important; display: flex; gap: 8px; justify-content: flex-end; }
+      .message-btn:hover { background: #2563eb !important; }
+      #groupMessageText { width: 300px !important; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div id="toast" class="toast"></div>
+      <a class="link" href="/?tg_id={{ request.query_params.get('tg_id') }}">← Назад</a>
+      <div class="group-header">
+        <h2>{{ group[2] if group else '' }}</h2>
+        {% if is_admin %}
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <button class="message-btn" onclick="openGroupMessageModal()" style="background: #3b82f6; color: white; border: none; border-radius: 4px; padding: 4px 8px; cursor: pointer; font-size: 12px;">✉️</button>
+            <a class="group-gear" href="/group/{{ group[0] }}/settings?tg_id={{ request.query_params.get('tg_id') }}" aria-label="Настройки">⚙️</a>
+          </div>
+        {% endif %}
+      </div>
+      <div class="meta-line">#{{ group[0] }}</div>
+      <div class="meta-line">{{ group[1] }}</div>
+      <div class="meta-line">Роль: {{ role }}</div>
+      <div class="meta-line">Мероприятий: {{ event_count }}</div>
+
+      <h3>Мероприятия</h3>
+      {% if not events %}
+        <div class="empty">Пока нет мероприятий</div>
+      {% else %}
+        <div>
+          {% for e in events %}
+            <div class="event-card">
+              <div class="event-head">
+                <div class="event-title"><a class="link" href="/group/{{ group[0] }}/events/{{ e.id }}?tg_id={{ request.query_params.get('tg_id') }}" style="text-decoration:none;">{{ e.name }}</a></div>
+                <div class="event-date">{{ e.time_display }}</div>
+              </div>
+              {% if e.responsible_name %}
+                <div class="responsible">Ответственный: {{ e.responsible_name }}</div>
+              {% endif %}
+              {% if is_admin %}
+                <a class="gear" href="/group/{{ group[0] }}/events/{{ e.id }}/settings?tg_id={{ request.query_params.get('tg_id') }}" aria-label="Настройки оповещений">🔔</a>
+                <form method="post" action="/group/{{ group[0] }}/events/{{ e.id }}/update?tg_id={{ request.query_params.get('tg_id') }}" style="margin-top:8px;">
+                  <div class="row">
+                    <input class="name-input" type="text" name="name" placeholder="Название" value="{{ e.name }}" />
+                    <input class="time-input" type="datetime-local" name="time" value="{{ e.time_input }}" />
+                  </div>
+                  <div class="actions">
+                    {% if member_options and member_options|length > 0 %}
+                      <div class="autocomplete-container">
+                        <input class="autocomplete-input" type="text" placeholder="— ответственный —" 
+                               value="{% if e.responsible_user_id %}{{ member_options|selectattr('0', 'equalto', e.responsible_user_id)|map(attribute='1')|first }}{% endif %}"
+                               data-user-id="{% if e.responsible_user_id %}{{ e.responsible_user_id }}{% else %}0{% endif %}"
+                               autocomplete="off">
+                        <input type="hidden" name="responsible_user_id" value="{% if e.responsible_user_id %}{{ e.responsible_user_id }}{% else %}0{% endif %}">
+                        <div class="autocomplete-dropdown" style="display: none;">
+                          <div class="autocomplete-option" data-value="0">— ответственный —</div>
+                          {% for uid, label in member_options %}
+                            <div class="autocomplete-option" data-value="{{ uid }}">{{ label }}</div>
+                          {% endfor %}
+                        </div>
+                      </div>
+                    {% endif %}
+                  </div>
+                  <div class="actions" style="justify-content: flex-end; margin-top: 8px; margin-right: -8px;">
+                    {% if not e.responsible_user_id and not e.has_any_bookings %}
+                      <form method="post" action="/group/{{ group[0] }}/events/{{ e.id }}/book?tg_id={{ request.query_params.get('tg_id') }}" style="display: inline;">
+                        <button class="btn" type="submit">Забронировать</button>
+                      </form>
+                    {% elif e.id in booked_ids %}
+                      <form method="post" action="/group/{{ group[0] }}/events/{{ e.id }}/unbook?tg_id={{ request.query_params.get('tg_id') }}" style="display: inline;">
+                        <button class="btn" type="submit" style="background: var(--danger);">Снять бронь</button>
+                      </form>
+                    {% endif %}
+                    <button class="btn" type="submit">Сохранить</button>
+                    <form method="post" action="/group/{{ group[0] }}/events/{{ e.id }}/delete?tg_id={{ request.query_params.get('tg_id') }}" style="display: inline;">
+                      <button class="btn" type="submit" style="background: var(--danger);">Удалить</button>
+                    </form>
+                  </div>
+                </form>
+              {% else %}
+                {% set bookings = bookings_map.get(e.id, []) %}
+                {% if bookings %}
+                  <div class="meta-line" style="margin-top:6px;">Забронировали: 
+                    {% for uid, nm in bookings %}
+                      {{ nm }}{% if not loop.last %}, {% endif %}
+                    {% endfor %}
+                  </div>
+                {% endif %}
+                <div class="actions" style="justify-content: flex-end; margin-top: 8px;">
+                  {% if e.id in booked_ids %}
+                    <form method="post" action="/group/{{ group[0] }}/events/{{ e.id }}/unbook?tg_id={{ request.query_params.get('tg_id') }}" style="display: inline;">
+                      <button class="btn" type="submit" style="background: var(--danger);">Снять бронь</button>
+                    </form>
+                  {% else %}
+                    {% if not e.has_any_bookings %}
+                      <form method="post" action="/group/{{ group[0] }}/events/{{ e.id }}/book?tg_id={{ request.query_params.get('tg_id') }}" style="display: inline;">
+                        <button class="btn" type="submit">Забронировать</button>
+                      </form>
+                    {% endif %}
+                  {% endif %}
+                </div>
+              {% endif %}
+            </div>
+          {% endfor %}
+        </div>
+      {% endif %}
+
+      {% if is_admin %}
+        <h3>Добавить новое мероприятие</h3>
+        <form id="bulkForm" method="post" action="/group/{{ group[0] }}/events/create-multiple?tg_id={{ request.query_params.get('tg_id') }}">
+          <div id="rows"></div>
+          <div style="margin-top:8px; display:flex; gap:8px;">
+            <button class="btn" type="button" id="addRow">＋ Добавить строку</button>
+            <button class="btn" type="submit">Создать</button>
+          </div>
+        </form>
+        <script>
+          (function(){
+            const rows = document.getElementById('rows');
+            const addRowBtn = document.getElementById('addRow');
+            
+            function initAutocomplete(container) {
+              const input = container.querySelector('.autocomplete-input');
+              const hidden = container.querySelector('input[name="responsible_user_id"]');
+              const dropdown = container.querySelector('.autocomplete-dropdown');
+              const options = dropdown.querySelectorAll('.autocomplete-option');
+              
+              function filterOptions() {
+                const query = input.value.toLowerCase();
+                options.forEach(option => {
+                  const text = option.textContent.toLowerCase();
+                  option.style.display = text.includes(query) ? 'block' : 'none';
+                });
+                dropdown.style.display = 'block';
+              }
+              
+              function selectOption(option) {
+                input.value = option.textContent;
+                hidden.value = option.dataset.value;
+                dropdown.style.display = 'none';
+              }
+              
+              input.addEventListener('input', filterOptions);
+              input.addEventListener('focus', () => dropdown.style.display = 'block');
+              
+              options.forEach(option => {
+                option.addEventListener('click', () => selectOption(option));
+              });
+              
+              document.addEventListener('click', (e) => {
+                if (!container.contains(e.target)) {
+                  dropdown.style.display = 'none';
+                }
+              });
+            }
+            
+            function makeRow() {
+              const wrap = document.createElement('div');
+              wrap.className = 'item';
+              wrap.innerHTML = `
+                <div class=\"row\">
+                  <input class=\"name-input\" type=\"text\" name=\"name\" placeholder=\"Название\" />
+                  <input class=\"time-input\" type=\"datetime-local\" name=\"time\" />
+                </div>
+                <div class=\"row-actions\">
+                  <button type=\"button\" class=\"btn-small del-row\">Удалить строку</button>
+                </div>
+              `;
+              return wrap;
+            }
+            
+            function addRow() { 
+              const row = makeRow();
+              rows.appendChild(row);
+              // Initialize autocomplete for existing dropdowns
+              document.querySelectorAll('.autocomplete-container').forEach(initAutocomplete);
+            }
+            
+            addRowBtn.addEventListener('click', addRow);
+            rows.addEventListener('click', function(e){
+              const btn = e.target.closest('.del-row');
+              if (!btn) return;
+              const item = btn.closest('.item');
+              if (item) item.remove();
+            });
+            
+            // Initialize autocomplete for existing dropdowns
+            document.querySelectorAll('.autocomplete-container').forEach(initAutocomplete);
+            
+            // start with one row
+            addRow();
+          })();
+        </script>
+      {% endif %}
+    </div>
+
+    <!-- Group Message Modal -->
+    <div id="groupMessageModal" class="modal" style="display: none;">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3>Отправить сообщение в группу</h3>
+          <button class="close-btn" onclick="closeGroupMessageModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+          <textarea id="groupMessageText" placeholder="Введите сообщение для группы..." rows="4" style="width: 100%; padding: 8px; border: 1px solid #374151 !important; border-radius: 4px; resize: vertical; font-family: inherit; background: #1f2937 !important; color: #f9fafb !important;"></textarea>
+        </div>
+        <div class="modal-footer">
+          <button class="btn" onclick="sendGroupMessage()" style="background: #3b82f6;">Отправить</button>
+          <button class="btn" onclick="closeGroupMessageModal()" style="background: #6b7280;">Отмена</button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      (function(){
+        const url = new URL(window.location.href);
+        const ok = url.searchParams.get('ok');
+        if (ok) {
+          const toast = document.getElementById('toast');
+          const map = { created: 'Мероприятие создано', updated: 'Сохранено', booked: 'Бронь оформлена', unbooked: 'Бронь снята', name_saved: 'Имя сохранено', noop: 'Нет данных для создания' };
+          toast.textContent = map[ok] || 'Готово';
+          toast.style.display = 'block';
+          url.searchParams.delete('ok');
+          window.history.replaceState({}, '', url.toString());
+        }
+      })();
+
+      function openGroupMessageModal() {
+        document.getElementById('groupMessageText').value = '';
+        document.getElementById('groupMessageModal').style.display = 'block';
+        document.getElementById('groupMessageText').focus();
+      }
+
+      function closeGroupMessageModal() {
+        document.getElementById('groupMessageModal').style.display = 'none';
+      }
+
+      function sendGroupMessage() {
+        const message = document.getElementById('groupMessageText').value.trim();
+        if (!message) {
+          alert('Введите сообщение');
+          return;
+        }
+
+        // Send message via fetch
+        const formData = new FormData();
+        formData.append('message', message);
+        
+        fetch('/group/{{ group[0] }}/send-group-message?tg_id={{ request.query_params.get('tg_id') }}', {
+          method: 'POST',
+          body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+          if (data.success) {
+            alert('Сообщение отправлено в группу');
+            closeGroupMessageModal();
+          } else {
+            alert('Ошибка отправки: ' + (data.error || 'Неизвестная ошибка'));
+          }
+        })
+        .catch(error => {
+          console.error('Error:', error);
+          alert('Ошибка отправки сообщения');
+        });
+      }
+
+      // Close modal when clicking outside
+      window.onclick = function(event) {
+        const groupModal = document.getElementById('groupMessageModal');
+        if (event.target === groupModal) {
+          closeGroupMessageModal();
+        }
+      }
+    </script>
+  </body>
+  </html>
+
+

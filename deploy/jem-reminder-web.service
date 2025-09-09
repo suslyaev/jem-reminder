@@ -1,0 +1,17 @@
+[Unit]
+Description=JEM Reminder Web App
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/jem-reminder
+Environment=PATH=/opt/jem-reminder/env/bin
+ExecStart=/opt/jem-reminder/env/bin/uvicorn web.app:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+
+

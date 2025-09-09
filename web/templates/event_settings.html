@@ -1,0 +1,332 @@
+<!doctype html>
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Событие — {{ event[1] if event else '' }}</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <style>
+      .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+      .tab-btn { padding: 8px 16px; border: 1px solid var(--border); background: var(--card); color: var(--text); border-radius: 8px; cursor: pointer; }
+      .tab-btn.active { background: var(--btn); color: #fff; }
+      .tab-content { display: block; }
+      .tab-content.hidden { display: none; }
+      .switch-container { display: flex; gap: 8px; margin-bottom: 16px; align-items: center; }
+      .switch-btn { padding: 6px 12px; border: 1px solid var(--border); background: var(--card); color: var(--text); border-radius: 6px; cursor: pointer; font-size: 14px; }
+      .switch-btn.active { background: var(--btn); color: #fff; }
+      .form-group { margin-bottom: 12px; }
+      .form-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+      .item { position: relative; }
+      .delete-btn { position: absolute; top: 8px; right: 8px; background: #ef4444; color: white; border: none; border-radius: 4px; padding: 4px 8px; cursor: pointer; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <a class="link" href="/group/{{ group[0] }}">← К списку</a>
+      <h2>{{ event[1] }}</h2>
+      <div class="meta">{{ event_time_display }}</div>
+
+      {% if request.query_params.get('ok') == 'notification_added' %}
+        <div class="toast" style="background: #16a34a; color: #fff; padding: 10px 12px; border-radius: 10px; margin-bottom: 12px;">Групповое оповещение добавлено</div>
+      {% elif request.query_params.get('ok') == 'personal_notification_added' %}
+        <div class="toast" style="background: #16a34a; color: #fff; padding: 10px 12px; border-radius: 10px; margin-bottom: 12px;">Личное оповещение добавлено</div>
+      {% elif request.query_params.get('ok') == 'notification_in_past' %}
+        <div class="toast" style="background: #ef4444; color: #fff; padding: 10px 12px; border-radius: 10px; margin-bottom: 12px;">Оповещение не может быть в прошлом</div>
+      {% elif request.query_params.get('ok') == 'parse_error' %}
+        <div class="toast" style="background: #ef4444; color: #fff; padding: 10px 12px; border-radius: 10px; margin-bottom: 12px;">Ошибка парсинга времени</div>
+      {% elif request.query_params.get('ok') == 'event_not_found' %}
+        <div class="toast" style="background: #ef4444; color: #fff; padding: 10px 12px; border-radius: 10px; margin-bottom: 12px;">Событие не найдено</div>
+      {% endif %}
+
+      <h3>Ответственный</h3>
+      {% if role in ['admin', 'owner', 'superadmin'] %}
+        <form method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/update">
+          <div class="form-row">
+            <select name="responsible_user_id" style="min-width: 200px;">
+              <option value="0">— ответственный —</option>
+              {% for uid, uname in members %}
+                <option value="{{ uid }}" {% if event[4] == uid %}selected{% endif %}>{{ uname if uname else 'ID: ' + uid|string }}</option>
+              {% endfor %}
+            </select>
+            <button class="btn" type="submit">Сохранить</button>
+          </div>
+        </form>
+      {% else %}
+        {% if event[4] %}
+          <div class="meta">Ответственный: {{ responsible_name or 'ID: ' + event[4]|string }}</div>
+        {% else %}
+          <form method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/book">
+            <button class="btn" type="submit">Забронировать</button>
+          </form>
+        {% endif %}
+      {% endif %}
+
+      <h3>Оповещения</h3>
+      <div class="tabs">
+        {% if role in ['admin', 'owner', 'superadmin'] %}
+          <button class="tab-btn active" onclick="switchTab('group')" id="group-tab">Групповые</button>
+        {% endif %}
+        <button class="tab-btn {% if role not in ['admin', 'owner', 'superadmin'] %}active{% endif %}" onclick="switchTab('personal')" id="personal-tab">Личные</button>
+      </div>
+
+      <div id="group-notifications" class="tab-content {% if role not in ['admin', 'owner', 'superadmin'] %}hidden{% endif %}">
+        {% if role in ['admin', 'owner', 'superadmin'] %}
+          {% if not event_notifications %}
+            <div class="empty">Пока нет групповых оповещений</div>
+          {% else %}
+            <ul class="list">
+              {% for nid, time_before, time_unit, message_text in event_notifications %}
+                <li class="item">
+                  <div class="title">
+                    {% set unit_map = {
+                      'days': ['день', 'дня', 'дней'],
+                      'hours': ['час', 'часа', 'часов'],
+                      'minutes': ['минута', 'минуты', 'минут'],
+                      'weeks': ['неделя', 'недели', 'недель'],
+                      'months': ['месяц', 'месяца', 'месяцев']
+                    } %}
+                    {% set forms = unit_map.get(time_unit, ['', '', '']) %}
+                    {% if time_before == 1 %}
+                      {{ time_before }} {{ forms[0] }}
+                    {% elif time_before in [2, 3, 4] %}
+                      {{ time_before }} {{ forms[1] }}
+                    {% else %}
+                      {{ time_before }} {{ forms[2] }}
+                    {% endif %}
+                  </div>
+                  <div class="subtitle" style="font-size: 0.8em; color: #9ca3af; margin-top: 4px;">
+                    Когда: {{ _calculate_notification_time(event[2], time_before, time_unit) }}
+                  </div>
+                  <div class="subtitle" style="font-size: 0.8em; color: #9ca3af; margin-top: 2px;">
+                    Текст: {{ message_text if message_text else '—' }}
+                  </div>
+                  <form method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/notifications/{{ nid }}/delete" style="position: absolute; top: 8px; right: 8px;">
+                    <button type="submit" class="delete-btn">✕</button>
+                  </form>
+                </li>
+              {% endfor %}
+            </ul>
+          {% endif %}
+
+          <h4>Добавить групповое оповещение</h4>
+          <div class="switch-container">
+            <button type="button" class="switch-btn active" onclick="switchAddMode('text')" id="text-mode">Текстом</button>
+            <button type="button" class="switch-btn" onclick="switchAddMode('exact')" id="exact-mode">Точная дата</button>
+          </div>
+
+          <div id="text-add-form">
+            <form id="group-text-form" method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/notifications/add-text" enctype="application/x-www-form-urlencoded">
+              <input type="text" name="notification_text" placeholder="Например: за 1 день, за 2 часа, за 30 минут напомнить о встрече" required style="width: 100%; margin-bottom: 8px;" />
+              <input type="text" name="message_text" placeholder="Сообщение (необязательно)" style="width: 100%; margin-bottom: 8px;" />
+              <div style="display: flex; gap: 8px;">
+                <button class="btn" type="submit" style="flex: 1;">Добавить</button>
+                <button class="btn" type="button" onclick="clearForm('group-text-form')" style="background: #6b7280;">Очистить</button>
+              </div>
+            </form>
+          </div>
+
+          <div id="exact-add-form" style="display: none;">
+            <form method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/notifications/add-absolute">
+              <input type="date" name="date" required style="width: 100%; margin-bottom: 8px;" />
+              <input type="time" name="time" required style="width: 100%; margin-bottom: 8px;" />
+              <input type="text" name="message_text" placeholder="Сообщение (необязательно)" style="width: 100%; margin-bottom: 8px;" />
+              <button class="btn" type="submit">Добавить по дате</button>
+            </form>
+          </div>
+        {% else %}
+          <div class="empty">Групповые оповещения доступны только админам</div>
+        {% endif %}
+      </div>
+
+      <div id="personal-notifications" class="tab-content {% if role in ['admin', 'owner', 'superadmin'] %}hidden{% endif %}">
+        {% if not personal_notifications %}
+          <div class="empty">Пока нет личных оповещений</div>
+        {% else %}
+          <ul class="list">
+            {% for nid, time_before, time_unit, message_text in personal_notifications %}
+              <li class="item">
+                <div class="title">
+                  {% set unit_map = {
+                    'days': ['день', 'дня', 'дней'],
+                    'hours': ['час', 'часа', 'часов'],
+                    'minutes': ['минута', 'минуты', 'минут'],
+                    'weeks': ['неделя', 'недели', 'недель'],
+                    'months': ['месяц', 'месяца', 'месяцев']
+                  } %}
+                  {% set forms = unit_map.get(time_unit, ['', '', '']) %}
+                  {% if time_before == 1 %}
+                    {{ time_before }} {{ forms[0] }}
+                  {% elif time_before in [2, 3, 4] %}
+                    {{ time_before }} {{ forms[1] }}
+                  {% else %}
+                    {{ time_before }} {{ forms[2] }}
+                  {% endif %}
+                </div>
+                <div class="subtitle" style="font-size: 0.8em; color: #9ca3af; margin-top: 4px;">
+                  Когда: {{ _calculate_notification_time(event[2], time_before, time_unit) }}
+                </div>
+                <div class="subtitle" style="font-size: 0.8em; color: #9ca3af; margin-top: 2px;">
+                  Текст: {{ message_text if message_text else '—' }}
+                </div>
+                <form method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/personal-notifications/{{ nid }}/delete" style="position: absolute; top: 8px; right: 8px;">
+                  <button type="submit" class="delete-btn">✕</button>
+                </form>
+              </li>
+            {% endfor %}
+          </ul>
+        {% endif %}
+
+        <h4>Добавить личное оповещение</h4>
+        <div class="switch-container">
+          <button type="button" class="switch-btn active" onclick="switchAddMode('text')" id="personal-text-mode">Текстом</button>
+          <button type="button" class="switch-btn" onclick="switchAddMode('exact')" id="personal-exact-mode">Точная дата</button>
+        </div>
+
+        <div id="personal-text-add-form">
+          <form id="personal-text-form" method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/personal-notifications/add-text" enctype="application/x-www-form-urlencoded">
+            <input type="text" name="notification_text" placeholder="Например: за 1 день, за 2 часа, за 30 минут напомнить о встрече" required style="width: 100%; margin-bottom: 8px;" />
+            <input type="text" name="message_text" placeholder="Сообщение (необязательно)" style="width: 100%; margin-bottom: 8px;" />
+            <div style="display: flex; gap: 8px;">
+              <button class="btn" type="submit" style="flex: 1;">Добавить</button>
+              <button class="btn" type="button" onclick="clearForm('personal-text-form')" style="background: #6b7280;">Очистить</button>
+            </div>
+          </form>
+        </div>
+
+        <div id="personal-exact-add-form" style="display: none;">
+          <form method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/personal-notifications/add-absolute">
+            <input type="date" name="date" required style="width: 100%; margin-bottom: 8px;" />
+            <input type="time" name="time" required style="width: 100%; margin-bottom: 8px;" />
+            <input type="text" name="message_text" placeholder="Сообщение (необязательно)" style="width: 100%; margin-bottom: 8px;" />
+            <button class="btn" type="submit">Добавить по дате</button>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      (function(){
+        const url = new URL(window.location.href);
+        const ok = url.searchParams.get('ok');
+        if (ok) {
+          const map = { 
+            notification_added: 'Групповое оповещение добавлено', 
+            personal_notification_added: 'Личное оповещение добавлено', 
+            personal_notification_deleted: 'Личное оповещение удалено', 
+            parse_error: 'Ошибка парсинга. Используйте формат: за 1 день, за 2 часа и т.д.', 
+            event_booked: 'Мероприятие забронировано',
+            booking_error: 'Ошибка бронирования',
+            method_error: 'Ошибка: форма отправлена неправильным методом'
+          };
+          if (map[ok]) {
+            alert(map[ok]);
+            url.searchParams.delete('ok');
+            window.history.replaceState({}, '', url.toString());
+          }
+        }
+      })();
+
+      function switchTab(tabName) {
+        // Hide all tab contents
+        document.querySelectorAll('.tab-content').forEach(content => {
+          content.style.display = 'none';
+        });
+        
+        // Remove active class from all buttons
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+          btn.classList.remove('active');
+        });
+        
+        // Show selected tab content
+        document.getElementById(tabName + '-notifications').style.display = 'block';
+        
+        // Add active class to selected button
+        document.getElementById(tabName + '-tab').classList.add('active');
+      }
+
+      function validateDateTimeForm(form) {
+        const dateInput = form.querySelector('input[name="date"]');
+        const timeInput = form.querySelector('input[name="time"]');
+        
+        if (!dateInput.value || !timeInput.value) {
+          alert('Пожалуйста, выберите дату и время');
+          return false;
+        }
+        
+        // Проверяем, что дата в будущем
+        const selectedDate = new Date(dateInput.value + 'T' + timeInput.value);
+        const now = new Date();
+        if (selectedDate <= now) {
+          alert('Дата и время должны быть в будущем');
+          return false;
+        }
+        
+        return true;
+      }
+
+      // Prevent Safari form submission issues
+      document.addEventListener('DOMContentLoaded', function() {
+        const forms = document.querySelectorAll('form');
+        forms.forEach(form => {
+          form.addEventListener('submit', function(e) {
+            console.log('Form submitting:', form.action);
+            
+            // Clear form after submission to prevent Safari issues
+            setTimeout(() => {
+              form.reset();
+            }, 100);
+          });
+        });
+      });
+
+      function clearForm(formId) {
+        const form = document.getElementById(formId);
+        if (form) {
+          form.reset();
+          console.log('Form cleared:', formId);
+        }
+      }
+
+      function switchAddMode(mode) {
+        // Switch for group notifications
+        const groupTextForm = document.getElementById('text-add-form');
+        const groupExactForm = document.getElementById('exact-add-form');
+        const groupTextBtn = document.getElementById('text-mode');
+        const groupExactBtn = document.getElementById('exact-mode');
+        
+        if (groupTextForm && groupExactForm && groupTextBtn && groupExactBtn) {
+          if (mode === 'text') {
+            groupTextForm.style.display = 'block';
+            groupExactForm.style.display = 'none';
+            groupTextBtn.classList.add('active');
+            groupExactBtn.classList.remove('active');
+          } else {
+            groupTextForm.style.display = 'none';
+            groupExactForm.style.display = 'block';
+            groupTextBtn.classList.remove('active');
+            groupExactBtn.classList.add('active');
+          }
+        }
+
+        // Switch for personal notifications
+        const personalTextForm = document.getElementById('personal-text-add-form');
+        const personalExactForm = document.getElementById('personal-exact-add-form');
+        const personalTextBtn = document.getElementById('personal-text-mode');
+        const personalExactBtn = document.getElementById('personal-exact-mode');
+        
+        if (personalTextForm && personalExactForm && personalTextBtn && personalExactBtn) {
+          if (mode === 'text') {
+            personalTextForm.style.display = 'block';
+            personalExactForm.style.display = 'none';
+            personalTextBtn.classList.add('active');
+            personalExactBtn.classList.remove('active');
+          } else {
+            personalTextForm.style.display = 'none';
+            personalExactForm.style.display = 'block';
+            personalTextBtn.classList.remove('active');
+            personalExactBtn.classList.add('active');
+          }
+        }
+      }
+    </script>
+  </body>
+  </html>

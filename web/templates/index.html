@@ -1,0 +1,46 @@
+<!doctype html>
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Группы</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <style>
+      .group-card { position: relative; padding: 12px 44px 12px 12px; border-radius: 12px; background: var(--card); margin-bottom: 12px; }
+      .group-title { font-weight: 700; font-size: 16px; }
+      .gear { position:absolute; top: 10px; right: 10px; text-decoration:none; }
+      .meta-line { color: var(--muted); font-size: 14px; margin-top: 4px; }
+      .greet { margin-bottom: 12px; }
+      .greet .meta-line { margin-top: 2px; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="greet">
+        <h2>Привет, {{ user_info.display }}!</h2>
+        {% if user_info.username %}<div class="meta-line">@{{ user_info.username }}</div>{% endif %}
+        <div class="meta-line">ID: {{ user_info.telegram_id }}</div>
+        {% if user_info.phone %}<div class="meta-line">Телефон: {{ user_info.phone }}</div>{% endif %}
+      </div>
+      <h3>Выберите группу</h3>
+      {% if not groups %}
+        <div class="empty">Нет доступных групп</div>
+      {% else %}
+        <div>
+          {% for gid, title, role, cnt, role_label, chat_id in groups %}
+            <div class="group-card">
+              <div class="group-title"><a class="link" href="/group/{{ gid }}?tg_id={{ request.query_params.get('tg_id') }}" style="text-decoration:none;">{{ title }} (#{{ gid }})</a></div>
+              <div class="meta-line">{{ chat_id }}</div>
+              <div class="meta-line">Роль: {{ role_label }}</div>
+              <div class="meta-line">Мероприятий: {{ cnt }}</div>
+              {% if role in ['owner','admin','superadmin'] %}
+                <a class="gear" href="/group/{{ gid }}/settings?tg_id={{ request.query_params.get('tg_id') }}" aria-label="Настройки">⚙️</a>
+              {% endif %}
+            </div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    </div>
+  </body>
+  </html>
+
+

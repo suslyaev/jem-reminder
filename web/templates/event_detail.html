@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ event[1] if event else '' }}</title>
+    <link rel="stylesheet" href="/static/style.css">
+  </head>
+  <body>
+    <div class="container">
+      <a class="link" href="/group/{{ group[0] }}?tg_id={{ request.query_params.get('tg_id') }}">← К группе</a>
+      <h2>{{ event[1] }}</h2>
+      <div class="meta">{{ event_time_display }}</div>
+
+      <h3>Брони</h3>
+      {% if not bookings %}
+        <div class="empty">Никто не забронировал</div>
+      {% else %}
+        <ul class="list">
+          {% for uid, nm in bookings %}
+            <li class="item"><div class="title">{{ nm }}</div></li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+    </div>
+  </body>
+  </html>

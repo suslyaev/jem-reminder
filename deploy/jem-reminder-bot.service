@@ -1,0 +1,17 @@
+[Unit]
+Description=JEM Reminder Bot
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/jem-reminder
+Environment=PATH=/opt/jem-reminder/env/bin
+ExecStart=/opt/jem-reminder/env/bin/python /opt/jem-reminder/bot.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+
+
