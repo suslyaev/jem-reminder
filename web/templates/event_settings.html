@@ -30,7 +30,7 @@
   </head>
   <body>
     <div class="container">
-      <a class="link" href="/group/{{ group[0] }}">← К списку</a>
+      <a class="link" href="/group/{{ group[0] }}{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">← К списку</a>
       <h2>{{ event[1] }}</h2>
       <div class="meta">{{ event_time_display }}</div>
 
