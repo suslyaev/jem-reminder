@@ -50,7 +50,7 @@
 
       <h3>Ответственный</h3>
       {% if role in ['admin', 'owner', 'superadmin'] %}
-        <form method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/update">
+        <form method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/update{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">
           <div class="form-row">
             <div class="autocomplete-container">
               <input class="autocomplete-input" type="text" placeholder="— ответственный —" 
@@ -73,7 +73,7 @@
         {% if event[4] %}
           <div class="meta">Ответственный: {{ responsible_name or 'ID: ' + event[4]|string }}</div>
         {% else %}
-          <form method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/book">
+          <form method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/book{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">
             <button class="btn" type="submit">Забронировать</button>
           </form>
         {% endif %}
@@ -118,7 +118,7 @@
                   <div class="subtitle" style="font-size: 0.8em; color: #9ca3af; margin-top: 2px;">
                     Текст: {{ message_text if message_text else '—' }}
                   </div>
-                  <form method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/notifications/{{ nid }}/delete" style="position: absolute; top: 8px; right: 8px;">
+                  <form method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/notifications/{{ nid }}/delete{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="position: absolute; top: 8px; right: 8px;">
                     <button type="submit" class="delete-btn">✕</button>
                   </form>
                 </li>
@@ -133,7 +133,7 @@
           </div>
 
           <div id="text-add-form">
-            <form id="group-text-form" method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/notifications/add-text" enctype="application/x-www-form-urlencoded">
+            <form id="group-text-form" method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/notifications/add-text{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" enctype="application/x-www-form-urlencoded">
               <input type="text" name="notification_text" placeholder="Например: за 1 день, за 2 часа, за 30 минут напомнить о встрече" required style="width: 100%; margin-bottom: 8px;" />
               <input type="text" name="message_text" placeholder="Сообщение (необязательно)" style="width: 100%; margin-bottom: 8px;" />
               <div style="display: flex; gap: 8px;">
@@ -144,7 +144,7 @@
           </div>
 
           <div id="exact-add-form" style="display: none;">
-            <form method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/notifications/add-absolute">
+            <form method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/notifications/add-absolute{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">
               <input type="date" name="date" required style="width: 100%; margin-bottom: 8px;" />
               <input type="time" name="time" required style="width: 100%; margin-bottom: 8px;" />
               <input type="text" name="message_text" placeholder="Сообщение (необязательно)" style="width: 100%; margin-bottom: 8px;" />
@@ -186,7 +186,7 @@
                 <div class="subtitle" style="font-size: 0.8em; color: #9ca3af; margin-top: 2px;">
                   Текст: {{ message_text if message_text else '—' }}
                 </div>
-                <form method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/personal-notifications/{{ nid }}/delete" style="position: absolute; top: 8px; right: 8px;">
+                <form method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/personal-notifications/{{ nid }}/delete{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="position: absolute; top: 8px; right: 8px;">
                   <button type="submit" class="delete-btn">✕</button>
                 </form>
               </li>
@@ -201,7 +201,7 @@
         </div>
 
         <div id="personal-text-add-form">
-          <form id="personal-text-form" method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/personal-notifications/add-text" enctype="application/x-www-form-urlencoded">
+          <form id="personal-text-form" method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/personal-notifications/add-text{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" enctype="application/x-www-form-urlencoded">
             <input type="text" name="notification_text" placeholder="Например: за 1 день, за 2 часа, за 30 минут напомнить о встрече" required style="width: 100%; margin-bottom: 8px;" />
             <input type="text" name="message_text" placeholder="Сообщение (необязательно)" style="width: 100%; margin-bottom: 8px;" />
             <div style="display: flex; gap: 8px;">
@@ -212,7 +212,7 @@
         </div>
 
         <div id="personal-exact-add-form" style="display: none;">
-          <form method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/personal-notifications/add-absolute">
+          <form method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/personal-notifications/add-absolute{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">
             <input type="date" name="date" required style="width: 100%; margin-bottom: 8px;" />
             <input type="time" name="time" required style="width: 100%; margin-bottom: 8px;" />
             <input type="text" name="message_text" placeholder="Сообщение (необязательно)" style="width: 100%; margin-bottom: 8px;" />
