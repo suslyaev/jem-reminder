@@ -306,40 +306,47 @@
         }
       }
 
-      // Delete group functions
-      function confirmDeleteGroup() {
-        document.getElementById('deleteGroupModal').style.display = 'block';
-        // Add tg_id to the delete form when modal opens
-        addTgIdToForms();
-        
-        // Debug: check if form has tg_id
-        const deleteForm = document.querySelector('#deleteGroupModal form');
-        if (deleteForm) {
-          const tgIdInput = deleteForm.querySelector('input[name="tg_id"]');
-          console.log('Delete form tg_id input:', tgIdInput ? tgIdInput.value : 'NOT FOUND');
+      document.addEventListener('DOMContentLoaded', function() {
+        function closeDeleteGroupModal() {
+          document.getElementById('deleteGroupModal').style.display = 'none';
+        }
+
+        function confirmDeleteGroup() {
+          document.getElementById('deleteGroupModal').style.display = 'block';
+          // Add tg_id to the delete form when modal opens
+          addTgIdToForms();
           
-          // Add submit event listener for debugging
-          deleteForm.addEventListener('submit', function(e) {
-            console.log('Delete form submitting...');
-            console.log('Form method:', deleteForm.method);
-            console.log('Form action:', deleteForm.action);
-          });
+          // Debug: check if form has tg_id
+          const deleteForm = document.querySelector('#deleteGroupModal form');
+          if (deleteForm) {
+            const tgIdInput = deleteForm.querySelector('input[name="tg_id"]');
+            console.log('Delete form tg_id input:', tgIdInput ? tgIdInput.value : 'NOT FOUND');
+            
+            // Add submit event listener for debugging
+            deleteForm.addEventListener('submit', function(e) {
+              console.log('Delete form submitting...');
+              console.log('Form method:', deleteForm.method);
+              console.log('Form action:', deleteForm.action);
+            });
+          }
         }
-      }
 
-      function closeDeleteGroupModal() {
-        document.getElementById('deleteGroupModal').style.display = 'none';
-      }
-
-      // Close modal when clicking outside
-      window.onclick = function(event) {
-        const deleteModal = document.getElementById('deleteGroupModal');
-        if (event.target === deleteModal) {
-          closeDeleteGroupModal();
+        function addTgIdToForms() {
+          const tgId = new URLSearchParams(window.location.search).get('tg_id');
+          if (tgId && tgId !== 'None') {
+            document.querySelectorAll('form').forEach(form => {
+              if (!form.querySelector('input[name="tg_id"]')) {
+                const hiddenInput = document.createElement('input');
+                hiddenInput.type = 'hidden';
+                hiddenInput.name = 'tg_id';
+                hiddenInput.value = tgId;
+                form.appendChild(hiddenInput);
+              }
+            });
+          }
         }
-      }
-      
-      (function(){
+
+        // Initialize forms and show success messages
         addTgIdToForms();
         
         const url = new URL(window.location.href);
@@ -352,84 +359,95 @@
             window.history.replaceState({}, '', url.toString());
           }
         }
-      })();
-      
-      function switchTab(tabName) {
-        // Hide all tab contents
-        document.querySelectorAll('.tab-content').forEach(content => {
-          content.style.display = 'none';
-        });
-        
-        // Remove active class from all buttons
-        document.querySelectorAll('.tab-btn').forEach(btn => {
-          btn.classList.remove('active');
-        });
-        
-        // Show selected tab content
-        document.getElementById(tabName + '-notifications').style.display = 'block';
-        
-        // Add active class to selected button
-        document.getElementById(tabName + '-tab').classList.add('active');
-      }
-
-      let currentRecipientId = null;
-
-      function openMessageModal(userId, userName) {
-        currentRecipientId = userId;
-        document.getElementById('modalRecipient').textContent = 'Кому: ' + userName;
-        document.getElementById('messageText').value = '';
-        document.getElementById('messageModal').style.display = 'block';
-        document.getElementById('messageText').focus();
-      }
-
-      function closeMessageModal() {
-        document.getElementById('messageModal').style.display = 'none';
-        currentRecipientId = null;
-      }
-
-      function sendMessage() {
-        const message = document.getElementById('messageText').value.trim();
-        if (!message) {
-          alert('Введите сообщение');
-          return;
-        }
-        
-        if (!currentRecipientId) {
-          alert('Ошибка: получатель не выбран');
-          return;
+        function switchTab(tabName) {
+          // Hide all tab contents
+          document.querySelectorAll('.tab-content').forEach(content => {
+            content.style.display = 'none';
+          });
+          
+          // Remove active class from all buttons
+          document.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.classList.remove('active');
+          });
+          
+          // Show selected tab content
+          document.getElementById(tabName + '-notifications').style.display = 'block';
+          
+          // Add active class to selected button
+          document.getElementById(tabName + '-tab').classList.add('active');
         }
 
-        // Send message via fetch
-        const formData = new FormData();
-        formData.append('recipient_id', currentRecipientId);
-        formData.append('message', message);
-        
-        fetch('/group/{{ group[0] }}/send-message{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}', {
-          method: 'POST',
-          body: formData
-        })
-        .then(response => response.json())
-        .then(data => {
-          if (data.success) {
-            alert('Сообщение отправлено');
-            closeMessageModal();
-          } else {
-            alert('Ошибка отправки: ' + (data.error || 'Неизвестная ошибка'));
+        let currentRecipientId = null;
+
+        function openMessageModal(userId, userName) {
+          currentRecipientId = userId;
+          document.getElementById('modalRecipient').textContent = 'Кому: ' + userName;
+          document.getElementById('messageText').value = '';
+          document.getElementById('messageModal').style.display = 'block';
+          document.getElementById('messageText').focus();
+        }
+
+        function closeMessageModal() {
+          document.getElementById('messageModal').style.display = 'none';
+          currentRecipientId = null;
+        }
+
+        function sendMessage() {
+          const message = document.getElementById('messageText').value.trim();
+          if (!message) {
+            alert('Введите сообщение');
+            return;
           }
-        })
-        .catch(error => {
-          console.error('Error:', error);
-          alert('Ошибка отправки сообщения');
-        });
-      }
+          
+          if (!currentRecipientId) {
+            alert('Ошибка: получатель не выбран');
+            return;
+          }
 
-      // Close modal when clicking outside
-      window.onclick = function(event) {
-        const modal = document.getElementById('messageModal');
-        if (event.target === modal) {
-          closeMessageModal();
+          // Send message via fetch
+          const formData = new FormData();
+          formData.append('recipient_id', currentRecipientId);
+          formData.append('message', message);
+          
+          fetch('/group/{{ group[0] }}/send-message{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}', {
+            method: 'POST',
+            body: formData
+          })
+          .then(response => response.json())
+          .then(data => {
+            if (data.success) {
+              alert('Сообщение отправлено');
+              closeMessageModal();
+            } else {
+              alert('Ошибка отправки: ' + (data.error || 'Неизвестная ошибка'));
+            }
+          })
+          .catch(error => {
+            console.error('Error:', error);
+            alert('Ошибка отправки сообщения');
+          });
         }
-      }
+
+        // Close modals when clicking outside
+        window.onclick = function(event) {
+          const deleteModal = document.getElementById('deleteGroupModal');
+          const messageModal = document.getElementById('messageModal');
+          
+          if (event.target === deleteModal) {
+            closeDeleteGroupModal();
+          } else if (event.target === messageModal) {
+            closeMessageModal();
+          }
+        }
+
+        // Make functions globally available
+        window.switchTab = switchTab;
+        window.openMessageModal = openMessageModal;
+        window.closeMessageModal = closeMessageModal;
+        window.sendMessage = sendMessage;
+        window.closeDeleteGroupModal = closeDeleteGroupModal;
+        window.confirmDeleteGroup = confirmDeleteGroup;
+      });
     </script>
   </body>
   </html>
