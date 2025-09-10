@@ -14,9 +14,18 @@
       .switch-btn { padding: 6px 12px; border: 1px solid var(--border); background: var(--card); color: var(--text); border-radius: 6px; cursor: pointer; font-size: 14px; }
       .switch-btn.active { background: var(--btn); color: #fff; }
       .form-group { margin-bottom: 12px; }
-      .form-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+      .form-row { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; width: 100%; }
       .item { position: relative; }
       .delete-btn { position: absolute; top: 8px; right: 8px; background: #ef4444; color: white; border: none; border-radius: 4px; padding: 4px 8px; cursor: pointer; font-size: 12px; }
+      .autocomplete-container { flex: 1 1 auto; min-width: 0; position: relative; }
+      .autocomplete-input { width: 100%; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text); font-size: 14px; }
+      .autocomplete-dropdown { position: absolute !important; top: 100% !important; left: 0 !important; right: 0 !important; background: #1f2937 !important; border: 1px solid #374151 !important; border-radius: 8px !important; max-height: 200px !important; overflow-y: auto !important; z-index: 1000 !important; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5) !important; margin-top: 4px !important; opacity: 1 !important; }
+      .autocomplete-option { padding: 8px 12px; cursor: pointer; color: var(--text); }
+      .autocomplete-option:hover { background: #374151; }
+      .autocomplete-option.highlighted { background: #374151; }
+      .autocomplete-clear { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: #6b7280; color: white; border: none; border-radius: 50%; width: 20px; height: 20px; cursor: pointer; font-size: 12px; display: none; align-items: center; justify-content: center; }
+      .autocomplete-clear.show { display: flex; }
+      .toast { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 1000; padding: 12px 20px; border-radius: 8px; font-weight: 500; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3); }
     </style>
   </head>
   <body>
@@ -25,28 +34,38 @@
       <h2>{{ event[1] }}</h2>
       <div class="meta">{{ event_time_display }}</div>
 
-      {% if request.query_params.get('ok') == 'notification_added' %}
-        <div class="toast" style="background: #16a34a; color: #fff; padding: 10px 12px; border-radius: 10px; margin-bottom: 12px;">Групповое оповещение добавлено</div>
+      {% if request.query_params.get('ok') == 'updated' %}
+        <div class="toast" style="background: #16a34a; color: #fff;">Настройки мероприятия сохранены</div>
+      {% elif request.query_params.get('ok') == 'notification_added' %}
+        <div class="toast" style="background: #16a34a; color: #fff;">Групповое оповещение добавлено</div>
       {% elif request.query_params.get('ok') == 'personal_notification_added' %}
-        <div class="toast" style="background: #16a34a; color: #fff; padding: 10px 12px; border-radius: 10px; margin-bottom: 12px;">Личное оповещение добавлено</div>
+        <div class="toast" style="background: #16a34a; color: #fff;">Личное оповещение добавлено</div>
       {% elif request.query_params.get('ok') == 'notification_in_past' %}
-        <div class="toast" style="background: #ef4444; color: #fff; padding: 10px 12px; border-radius: 10px; margin-bottom: 12px;">Оповещение не может быть в прошлом</div>
+        <div class="toast" style="background: #ef4444; color: #fff;">Оповещение не может быть в прошлом</div>
       {% elif request.query_params.get('ok') == 'parse_error' %}
-        <div class="toast" style="background: #ef4444; color: #fff; padding: 10px 12px; border-radius: 10px; margin-bottom: 12px;">Ошибка парсинга времени</div>
+        <div class="toast" style="background: #ef4444; color: #fff;">Ошибка парсинга времени</div>
       {% elif request.query_params.get('ok') == 'event_not_found' %}
-        <div class="toast" style="background: #ef4444; color: #fff; padding: 10px 12px; border-radius: 10px; margin-bottom: 12px;">Событие не найдено</div>
+        <div class="toast" style="background: #ef4444; color: #fff;">Событие не найдено</div>
       {% endif %}
 
       <h3>Ответственный</h3>
       {% if role in ['admin', 'owner', 'superadmin'] %}
         <form method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/update">
           <div class="form-row">
-            <select name="responsible_user_id" style="min-width: 200px;">
-              <option value="0">— ответственный —</option>
+            <div class="autocomplete-container">
+              <input class="autocomplete-input" type="text" placeholder="— ответственный —" 
+                     value="{% if event[4] %}{{ members|selectattr('0', 'equalto', event[4])|map(attribute='1')|first }}{% endif %}"
+                     data-user-id="{% if event[4] %}{{ event[4] }}{% else %}0{% endif %}"
+                     autocomplete="off">
+              <button type="button" class="autocomplete-clear" id="responsibleClear">✕</button>
+              <input type="hidden" name="responsible_user_id" value="{% if event[4] %}{{ event[4] }}{% else %}0{% endif %}">
+              <div class="autocomplete-dropdown" style="display: none;">
+                <div class="autocomplete-option" data-value="0">— ответственный —</div>
               {% for uid, uname in members %}
-                <option value="{{ uid }}" {% if event[4] == uid %}selected{% endif %}>{{ uname if uname else 'ID: ' + uid|string }}</option>
+                  <div class="autocomplete-option" data-value="{{ uid }}">{{ uname if uname else 'ID: ' + uid|string }}</div>
               {% endfor %}
-            </select>
+              </div>
+            </div>
             <button class="btn" type="submit">Сохранить</button>
           </div>
         </form>
@@ -229,6 +248,7 @@
         const ok = url.searchParams.get('ok');
         if (ok) {
           const map = { 
+            updated: 'Настройки мероприятия сохранены',
             notification_added: 'Групповое оповещение добавлено', 
             personal_notification_added: 'Личное оповещение добавлено', 
             personal_notification_deleted: 'Личное оповещение удалено', 
@@ -238,9 +258,17 @@
             method_error: 'Ошибка: форма отправлена неправильным методом'
           };
           if (map[ok]) {
-            alert(map[ok]);
+            // Remove the ok parameter from URL immediately
             url.searchParams.delete('ok');
             window.history.replaceState({}, '', url.toString());
+            
+            // Auto-hide toast after 3 seconds
+            setTimeout(() => {
+              const toast = document.querySelector('.toast');
+              if (toast) {
+                toast.style.display = 'none';
+              }
+            }, 3000);
           }
         }
       })();
@@ -296,7 +324,120 @@
             }, 100);
           });
         });
+
+        // Initialize autocomplete for responsible user selection
+        const autocompleteContainer = document.querySelector('.autocomplete-container');
+        if (autocompleteContainer) {
+          initAutocomplete(autocompleteContainer);
+        }
       });
+
+      function initAutocomplete(container) {
+        const input = container.querySelector('.autocomplete-input');
+        const hidden = container.querySelector('input[name="responsible_user_id"]');
+        const dropdown = container.querySelector('.autocomplete-dropdown');
+        const options = dropdown.querySelectorAll('.autocomplete-option');
+        const clearBtn = container.querySelector('.autocomplete-clear');
+        
+        function updateClearButton() {
+          if (clearBtn) {
+            clearBtn.classList.toggle('show', input.value.trim() !== '');
+          }
+        }
+        
+        function clearInput() {
+          input.value = '';
+          hidden.value = '0';
+          input.setAttribute('data-user-id', '0');
+          dropdown.style.display = 'none';
+          updateClearButton();
+        }
+        
+        function filterOptions() {
+          const query = input.value.toLowerCase();
+          options.forEach(option => {
+            const text = option.textContent.toLowerCase();
+            option.style.display = text.includes(query) ? 'block' : 'none';
+          });
+          dropdown.style.display = 'block';
+          updateClearButton();
+        }
+        
+        function selectOption(option) {
+          const value = option.getAttribute('data-value');
+          const text = option.textContent;
+          
+          input.value = text;
+          hidden.value = value;
+          input.setAttribute('data-user-id', value);
+          dropdown.style.display = 'none';
+          updateClearButton();
+        }
+        
+        // Show dropdown on focus
+        input.addEventListener('focus', function() {
+          filterOptions();
+        });
+        
+        // Filter options on input
+        input.addEventListener('input', filterOptions);
+        
+        // Handle clear button click
+        if (clearBtn) {
+          clearBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            clearInput();
+          });
+        }
+        
+        // Handle option selection
+        options.forEach(option => {
+          option.addEventListener('click', function() {
+            selectOption(this);
+          });
+        });
+        
+        // Initialize clear button state
+        updateClearButton();
+        
+        // Hide dropdown when clicking outside
+        document.addEventListener('click', function(e) {
+          if (!container.contains(e.target)) {
+            dropdown.style.display = 'none';
+          }
+        });
+        
+        // Handle keyboard navigation
+        input.addEventListener('keydown', function(e) {
+          const visibleOptions = Array.from(options).filter(opt => opt.style.display !== 'none');
+          const currentIndex = visibleOptions.findIndex(opt => opt.classList.contains('highlighted'));
+          
+          if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            const nextIndex = currentIndex < visibleOptions.length - 1 ? currentIndex + 1 : 0;
+            visibleOptions.forEach(opt => opt.classList.remove('highlighted'));
+            if (visibleOptions[nextIndex]) {
+              visibleOptions[nextIndex].classList.add('highlighted');
+            }
+          } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            const prevIndex = currentIndex > 0 ? currentIndex - 1 : visibleOptions.length - 1;
+            visibleOptions.forEach(opt => opt.classList.remove('highlighted'));
+            if (visibleOptions[prevIndex]) {
+              visibleOptions[prevIndex].classList.add('highlighted');
+            }
+          } else if (e.key === 'Enter') {
+            e.preventDefault();
+            const highlighted = visibleOptions.find(opt => opt.classList.contains('highlighted'));
+            if (highlighted) {
+              selectOption(highlighted);
+            }
+          } else if (e.key === 'Escape') {
+            dropdown.style.display = 'none';
+          }
+        });
+      }
 
       function clearForm(formId) {
         const form = document.getElementById(formId);

@@ -311,6 +311,20 @@ async def group_view(request: Request, gid: int, tg_id: str | None = None):
     for mid, uname in member_rows:
         dn = DisplayNameRepo.get_display_name(gid, mid)
         member_name_map[mid] = dn if dn else (f"@{uname}" if uname else str(mid))
+    
+    # Filter out superadmin if current user is not superadmin
+    from config import SUPERADMIN_ID
+    is_superadmin = urow[1] == SUPERADMIN_ID  # urow[1] is telegram_id
+    if not is_superadmin:
+        # Remove superadmin from member options
+        filtered_member_rows = []
+        for mid, uname in member_rows:
+            # Check if this user is superadmin
+            user_role = RoleRepo.get_user_role(mid, gid)
+            if user_role != 'superadmin':
+                filtered_member_rows.append((mid, uname))
+        member_rows = filtered_member_rows
+    
     member_options = [(mid, member_name_map[mid]) for mid, _ in member_rows]
     event_items = []
     for eid, name, time_str, resp_uid in events:
@@ -406,7 +420,24 @@ async def update_event(request: Request, gid: int, eid: int, name: str | None = 
         # If assigning a responsible user, ensure their personal notifications are created from group settings
         if responsible_user_id and responsible_user_id != 0:
             PersonalEventNotificationRepo.create_from_group_for_user(eid, gid, responsible_user_id)
-    return RedirectResponse(url=f"/group/{gid}?ok=updated", status_code=303)
+    return RedirectResponse(url=f"/group/{gid}/events/{eid}/settings?ok=updated", status_code=303)
+
+
+@app.post('/group/{gid}/events/{eid}/update-from-card')
+async def update_event_from_card(request: Request, gid: int, eid: int, name: str | None = Form(None), time: str | None = Form(None), responsible_user_id: int | None = Form(None), tg_id: str | None = None):
+    urow = _require_user(tg_id, request)
+    user_id = urow[0]
+    _require_admin(user_id, gid)
+    if name is not None and name != "":
+        EventRepo.update_name(eid, name)
+    if time is not None and time != "":
+        EventRepo.update_time(eid, _normalize_dt_local(time) or time)
+    if responsible_user_id is not None:
+        EventRepo.set_responsible(eid, responsible_user_id if responsible_user_id != 0 else None)
+        # If assigning a responsible user, ensure their personal notifications are created from group settings
+        if responsible_user_id and responsible_user_id != 0:
+            PersonalEventNotificationRepo.create_from_group_for_user(eid, gid, responsible_user_id)
+    return RedirectResponse(url=f"/group/{gid}?ok=event_updated", status_code=303)
 
 
 # --- Settings: notifications & admins ---
@@ -629,22 +660,38 @@ async def event_settings(request: Request, gid: int, eid: int, tg_id: str | None
     
     group = GroupRepo.get_by_id(gid)
     event = EventRepo.get_by_id(eid)
-    members = GroupRepo.list_group_members(gid)
+    member_rows = GroupRepo.list_group_members(gid)
     event_notifications = EventNotificationRepo.list_by_event(eid)
     personal_notifications = PersonalEventNotificationRepo.list_by_user_and_event(user_id, eid)
+    
+    # Create member options with display names (same as in group.html)
+    member_name_map: dict[int, str] = {}
+    for mid, uname in member_rows:
+        dn = DisplayNameRepo.get_display_name(gid, mid)
+        member_name_map[mid] = dn if dn else (f"@{uname}" if uname else str(mid))
+    
+    # Filter out superadmin if current user is not superadmin
+    from config import SUPERADMIN_ID
+    is_superadmin = urow[1] == SUPERADMIN_ID  # urow[1] is telegram_id
+    if not is_superadmin:
+        # Remove superadmin from member options
+        filtered_member_rows = []
+        for mid, uname in member_rows:
+            # Check if this user is superadmin
+            user_role = RoleRepo.get_user_role(mid, gid)
+            if user_role != 'superadmin':
+                filtered_member_rows.append((mid, uname))
+        member_rows = filtered_member_rows
+    
+    member_options = [(mid, member_name_map[mid]) for mid, _ in member_rows]
     
     # Format event time display
     event_time_display, _ = _format_time_display(event[2])
     
     # Get responsible person name
-    responsible_name = None
-    if event[4]:  # if there's a responsible user
-        for uid, uname in members:
-            if uid == event[4]:
-                responsible_name = uname
-                break
+    responsible_name = member_name_map.get(event[4]) if event[4] else None
     
-    return render('event_settings.html', group=group, event=event, members=members, event_notifications=event_notifications, personal_notifications=personal_notifications, role=role, responsible_name=responsible_name, event_time_display=event_time_display, _calculate_notification_time=_calculate_notification_time, request=request)
+    return render('event_settings.html', group=group, event=event, members=member_options, event_notifications=event_notifications, personal_notifications=personal_notifications, role=role, responsible_name=responsible_name, event_time_display=event_time_display, _calculate_notification_time=_calculate_notification_time, request=request)
 
 
 @app.post('/group/{gid}/events/{eid}/notifications/add')

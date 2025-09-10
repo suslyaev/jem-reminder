@@ -17,7 +17,7 @@
       .actions { display:flex; gap:8px; margin-top: 8px; align-items: center; flex-wrap: wrap; }
       .responsible { color: var(--muted); font-size: 13px; margin-top: 6px; }
       .select { min-width: 180px; }
-      .toast { padding: 10px 12px; border-radius: 10px; background: #16a34a; color: #fff; margin-bottom: 12px; display:none; }
+      .toast { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 1000; padding: 12px 20px; border-radius: 8px; font-weight: 500; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3); background: #16a34a; color: #fff; display: none; }
       .meta-line { color: var(--muted); font-size: 14px; margin-top: 4px; }
       .group-header { display: flex; align-items: center; justify-content: space-between; }
       .group-gear { text-decoration: none; }
@@ -117,7 +117,7 @@
                 {% endif %}
               {% if is_admin %}
                 <a class="gear" href="/group/{{ group[0] }}/events/{{ e.id }}/settings{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Настройки оповещений">🔔</a>
-                <form method="post" action="/group/{{ group[0] }}/events/{{ e.id }}/update{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="margin-top:8px;">
+                <form method="post" action="/group/{{ group[0] }}/events/{{ e.id }}/update-from-card{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="margin-top:8px;">
                   <div class="row">
                     <input class="name-input" type="text" name="name" placeholder="Название" value="{{ e.name }}" />
                     <input class="time-input" type="datetime-local" name="time" value="{{ e.time_input }}" />
@@ -371,11 +371,18 @@
         const ok = url.searchParams.get('ok');
         if (ok) {
           const toast = document.getElementById('toast');
-          const map = { created: 'Мероприятие создано', updated: 'Сохранено', booked: 'Бронь оформлена', unbooked: 'Бронь снята', name_saved: 'Имя сохранено', noop: 'Нет данных для создания', event_deleted: 'Мероприятие удалено', event_booked: 'Мероприятие забронировано', booking_error: 'Ошибка бронирования' };
+          const map = { created: 'Мероприятие создано', updated: 'Сохранено', event_updated: 'Настройки мероприятия изменены', booked: 'Бронь оформлена', unbooked: 'Бронь снята', name_saved: 'Имя сохранено', noop: 'Нет данных для создания', event_deleted: 'Мероприятие удалено', event_booked: 'Мероприятие забронировано', booking_error: 'Ошибка бронирования' };
           toast.textContent = map[ok] || 'Готово';
           toast.style.display = 'block';
           url.searchParams.delete('ok');
           window.history.replaceState({}, '', url.toString());
+          
+          // Auto-hide toast after 3 seconds
+          setTimeout(() => {
+            if (toast) {
+              toast.style.display = 'none';
+            }
+          }, 3000);
         }
       })();
 
