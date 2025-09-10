@@ -56,15 +56,23 @@ def render(name: str, **ctx) -> HTMLResponse:
 
 
 def _require_user(tg_id: str | int | None, request: Request = None):
+    # Debug logging
+    print(f"_require_user called with tg_id={tg_id}, request={request is not None}")
+    
     # Try to get user data from Telegram Mini App first
     if request:
         telegram_user = get_telegram_user_data(request)
+        print(f"telegram_user from request: {telegram_user}")
         if telegram_user:
             tg_id = str(telegram_user['id'])
+            print(f"Using telegram_user id: {tg_id}")
     
     # Handle string "None" from templates
     if tg_id == "None":
         tg_id = None
+        print("Converted string 'None' to None")
+    
+    print(f"Final tg_id: {tg_id}")
     
     # Use test ID if no tg_id provided and test mode is enabled
     if tg_id is None and TEST_TELEGRAM_ID:
@@ -202,7 +210,9 @@ def get_telegram_user_data(request: Request) -> dict | None:
     try:
         # Get initData from query parameters
         init_data = request.query_params.get('tgWebAppData')
+        print(f"tgWebAppData from query: {init_data}")
         if not init_data:
+            print("No tgWebAppData found in query parameters")
             return None
             
         # Parse initData (it's URL-encoded)
