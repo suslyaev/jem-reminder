@@ -645,7 +645,7 @@ async def delete_group_notification(request: Request, gid: int, nid: int, tg_id:
     user_id = urow[0]
     _require_admin(user_id, gid)
     NotificationRepo.delete_notification(nid)
-    return RedirectResponse(url=f"/group/{gid}/settings?tg_id={tg_id}", status_code=303)
+    return RedirectResponse(url=f"/group/{gid}/settings?ok=notification_deleted&tg_id={tg_id}", status_code=303)
 
 
 @app.get('/group/{gid}/events/{eid}/settings', response_class=HTMLResponse)
@@ -797,7 +797,7 @@ async def delete_event_notification(request: Request, gid: int, eid: int, nid: i
     user_id = urow[0]
     _require_admin(user_id, gid)
     EventNotificationRepo.delete_notification(nid)
-    return RedirectResponse(url=f"/group/{gid}/events/{eid}/settings?tg_id={tg_id}", status_code=303)
+    return RedirectResponse(url=f"/group/{gid}/events/{eid}/settings?ok=notification_deleted&tg_id={tg_id}", status_code=303)
 
 @app.post('/group/{gid}/events/{eid}/personal-notifications/add-text')
 async def add_personal_event_notification_text(request: Request, gid: int, eid: int, notification_text: str = Form(...), message_text: str = Form(""), tg_id: str | None = None):

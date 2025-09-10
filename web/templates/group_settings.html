@@ -27,6 +27,12 @@
       <a class="link" href="/group/{{ group[0] }}{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">← К группе</a>
       <h2>Настройки группы</h2>
 
+      {% if request.query_params.get('ok') == 'notification_deleted' %}
+        <div class="toast" style="position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 1000; padding: 12px 20px; border-radius: 8px; font-weight: 500; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3); background: #ef4444; color: #fff; display: block;">Групповое уведомление удалено</div>
+      {% elif request.query_params.get('ok') == 'personal_notification_deleted' %}
+        <div class="toast" style="position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 1000; padding: 12px 20px; border-radius: 8px; font-weight: 500; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3); background: #ef4444; color: #fff; display: block;">Личное уведомление удалено</div>
+      {% endif %}
+
       {% if role in ['admin', 'owner', 'superadmin'] %}
         {% if pending %}
           <h3>Ожидающие подтверждения админы</h3>
@@ -305,6 +311,14 @@
       }
 
       document.addEventListener('DOMContentLoaded', function() {
+        // Auto-hide toast messages after 3 seconds
+        const toast = document.querySelector('.toast');
+        if (toast) {
+          setTimeout(() => {
+            toast.style.display = 'none';
+          }, 3000);
+        }
+        
         function closeDeleteGroupModal() {
           document.getElementById('deleteGroupModal').style.display = 'none';
         }

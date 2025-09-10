@@ -34,19 +34,7 @@
       <h2>{{ event[1] }}</h2>
       <div class="meta">{{ event_time_display }}</div>
 
-      {% if request.query_params.get('ok') == 'updated' %}
-        <div class="toast" style="background: #16a34a; color: #fff;">Настройки мероприятия сохранены</div>
-      {% elif request.query_params.get('ok') == 'notification_added' %}
-        <div class="toast" style="background: #16a34a; color: #fff;">Групповое оповещение добавлено</div>
-      {% elif request.query_params.get('ok') == 'personal_notification_added' %}
-        <div class="toast" style="background: #16a34a; color: #fff;">Личное оповещение добавлено</div>
-      {% elif request.query_params.get('ok') == 'notification_in_past' %}
-        <div class="toast" style="background: #ef4444; color: #fff;">Оповещение не может быть в прошлом</div>
-      {% elif request.query_params.get('ok') == 'parse_error' %}
-        <div class="toast" style="background: #ef4444; color: #fff;">Ошибка парсинга времени</div>
-      {% elif request.query_params.get('ok') == 'event_not_found' %}
-        <div class="toast" style="background: #ef4444; color: #fff;">Событие не найдено</div>
-      {% endif %}
+      <div id="toast" class="toast" style="display: none;"></div>
 
       <h3>Ответственный</h3>
       {% if role in ['admin', 'owner', 'superadmin'] %}
@@ -251,6 +239,7 @@
             updated: 'Настройки мероприятия сохранены',
             notification_added: 'Групповое оповещение добавлено', 
             personal_notification_added: 'Личное оповещение добавлено', 
+            notification_deleted: 'Групповое уведомление удалено',
             personal_notification_deleted: 'Личное оповещение удалено', 
             parse_error: 'Ошибка парсинга. Используйте формат: за 1 день, за 2 часа и т.д.', 
             event_booked: 'Мероприятие забронировано',
@@ -258,13 +247,26 @@
             method_error: 'Ошибка: форма отправлена неправильным методом'
           };
           if (map[ok]) {
+            const toast = document.getElementById('toast');
+            if (toast) {
+              toast.textContent = map[ok];
+              
+              // Set color based on message type
+              if (ok.includes('deleted') || ok.includes('error') || ok.includes('not_found') || ok.includes('in_past')) {
+                toast.style.background = '#ef4444'; // Red for errors and deletions
+              } else {
+                toast.style.background = '#16a34a'; // Green for success
+              }
+              
+              toast.style.display = 'block';
+            }
+            
             // Remove the ok parameter from URL immediately
             url.searchParams.delete('ok');
             window.history.replaceState({}, '', url.toString());
             
             // Auto-hide toast after 3 seconds
             setTimeout(() => {
-              const toast = document.querySelector('.toast');
               if (toast) {
                 toast.style.display = 'none';
               }
