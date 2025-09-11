@@ -190,6 +190,34 @@
         border-radius: 4px;
         font-size: 14px;
       }
+      
+      /* Мобильные стили для полей в модальном окне */
+      @media (max-width: 768px) {
+        .modal-content {
+          width: 95% !important;
+          max-width: none !important;
+        }
+        
+        .modal-body .item {
+          flex-direction: column !important;
+          gap: 8px !important;
+        }
+        
+        .modal-body .item input[name="name"] {
+          flex: none !important;
+          width: 100% !important;
+        }
+        
+        .modal-body .item input[name="time"] {
+          flex: none !important;
+          width: 100% !important;
+        }
+        
+        .modal-body .item .del-row {
+          align-self: flex-end !important;
+          width: auto !important;
+        }
+      }
     </style>
   </head>
   <body>
@@ -213,7 +241,7 @@
           <div class="meta-line">Мероприятий: {{ event_count }}</div>
         </div>
         {% if is_admin %}
-          <div style="display: flex; align-items: center; height: 56px; margin-top: 8px;">
+          <div style="display: flex; align-items: center; height: 56px; margin-top: 28px;">
             <button class="btn" onclick="openCreateEventModal()" style="background: #16a34a; color: white; padding: 8px 16px; font-size: 14px; border-radius: 6px; white-space: nowrap;">
               ➕ Создать мероприятие
             </button>
