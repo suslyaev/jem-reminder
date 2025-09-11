@@ -346,7 +346,7 @@ async def index(request: Request):
 
 
 @app.get('/group/{gid}', response_class=HTMLResponse)
-async def group_view(request: Request, gid: int):
+async def group_view(request: Request, gid: int, tab: str = None):
     urow = _require_user(request)
     user_id = urow[0]
     role = RoleRepo.get_user_role(user_id, gid)
@@ -386,10 +386,16 @@ async def group_view(request: Request, gid: int):
         member_rows = filtered_member_rows
     
     member_options = [(mid, member_name_map[mid]) for mid, _ in member_rows]
-    event_items = []
+    # Разделяем мероприятия на активные и архивные
+    from datetime import datetime
+    now = datetime.now()
+    
+    active_events = []
+    archived_events = []
+    
     for eid, name, time_str, resp_uid in events:
         disp, input_val = _format_time_display(time_str)
-        event_items.append({
+        event_data = {
             'id': eid,
             'name': name,
             'time_display': disp,
@@ -397,9 +403,22 @@ async def group_view(request: Request, gid: int):
             'responsible_user_id': resp_uid,
             'responsible_name': member_name_map.get(resp_uid) if resp_uid is not None else None,
             'has_any_bookings': len(bookings_map.get(eid, [])) > 0,
-        })
+        }
+        
+        # Проверяем, прошло ли мероприятие
+        try:
+            # Парсим время мероприятия
+            event_time = datetime.strptime(time_str, "%Y-%m-%d %H:%M")
+            if event_time < now:
+                archived_events.append(event_data)
+            else:
+                active_events.append(event_data)
+        except ValueError:
+            # Если не удалось распарсить время, считаем активным
+            active_events.append(event_data)
+    
     event_count = GroupRepo.count_group_events(gid)
-    return render('group.html', group=group, role=_role_label(role or 'participant'), is_admin=is_admin, events=event_items, booked_ids=booked_ids, display_name=display_name, bookings_map=bookings_map, member_options=member_options, event_count=event_count, request=request)
+    return render('group.html', group=group, role=_role_label(role or 'participant'), is_admin=is_admin, active_events=active_events, archived_events=archived_events, booked_ids=booked_ids, display_name=display_name, bookings_map=bookings_map, member_options=member_options, event_count=event_count, active_tab=tab or 'active', request=request)
 
 
 # --- Event CRUD ---
@@ -484,7 +503,7 @@ async def update_event(request: Request, gid: int, eid: int, name: str | None = 
 
 
 @app.post('/group/{gid}/events/{eid}/update-from-card')
-async def update_event_from_card(request: Request, gid: int, eid: int, name: str | None = Form(None), time: str | None = Form(None), responsible_user_id: int | None = Form(None)):
+async def update_event_from_card(request: Request, gid: int, eid: int, name: str | None = Form(None), time: str | None = Form(None), responsible_user_id: int | None = Form(None), tab: str | None = Form(None)):
     urow = _require_user(request)
     user_id = urow[0]
     _require_admin(user_id, gid)
@@ -497,7 +516,8 @@ async def update_event_from_card(request: Request, gid: int, eid: int, name: str
         # If assigning a responsible user, ensure their personal notifications are created from group settings
         if responsible_user_id and responsible_user_id != 0:
             PersonalEventNotificationRepo.create_from_group_for_user(eid, gid, responsible_user_id)
-    return RedirectResponse(url=f"/group/{gid}?ok=event_updated", status_code=303)
+    tab_param = f"&tab={tab}" if tab else ""
+    return RedirectResponse(url=f"/group/{gid}?ok=event_updated{tab_param}", status_code=303)
 
 
 # --- Settings: notifications & admins ---
@@ -963,7 +983,7 @@ async def delete_personal_event_notification(request: Request, gid: int, eid: in
     return RedirectResponse(f"/group/{gid}/events/{eid}/settings?ok=personal_notification_deleted", status_code=303)
 
 @app.post('/group/{gid}/events/{eid}/delete')
-async def delete_event(request: Request, gid: int, eid: int):
+async def delete_event(request: Request, gid: int, eid: int, tab: str | None = Form(None)):
     urow = _require_user(request)
     user_id = urow[0]
     _require_admin(user_id, gid)
@@ -973,10 +993,11 @@ async def delete_event(request: Request, gid: int, eid: int):
     result = EventRepo.delete(eid)
     print(f"DELETE RESULT: {result}")
     
-    return RedirectResponse(f"/group/{gid}?ok=event_deleted", status_code=303)
+    tab_param = f"&tab={tab}" if tab else ""
+    return RedirectResponse(f"/group/{gid}?ok=event_deleted{tab_param}", status_code=303)
 
 @app.post('/group/{gid}/events/{eid}/book')
-async def book_event(request: Request, gid: int, eid: int):
+async def book_event(request: Request, gid: int, eid: int, tab: str | None = Form(None)):
     urow = _require_user(request)
     user_id = urow[0]
     
@@ -998,7 +1019,8 @@ async def book_event(request: Request, gid: int, eid: int):
     PersonalEventNotificationRepo.create_from_group_for_user(eid, gid, user_id)
     
     print(f"BOOKING SUCCESS")
-    return RedirectResponse(f"/group/{gid}?ok=event_booked", status_code=303)
+    tab_param = f"&tab={tab}" if tab else ""
+    return RedirectResponse(f"/group/{gid}?ok=event_booked{tab_param}", status_code=303)
 
 
 @app.get('/group/{gid}/events/{eid}', response_class=HTMLResponse)
@@ -1016,11 +1038,12 @@ async def event_detail(request: Request, gid: int, eid: int):
 
 
 @app.post('/group/{gid}/events/{eid}/unbook')
-async def unbook_event(request: Request, gid: int, eid: int):
+async def unbook_event(request: Request, gid: int, eid: int, tab: str | None = Form(None)):
     urow = _require_user(request)
     user_id = urow[0]
     BookingRepo.remove_booking(user_id, eid)
-    return RedirectResponse(url=f"/group/{gid}?ok=unbooked", status_code=303)
+    tab_param = f"&tab={tab}" if tab else ""
+    return RedirectResponse(url=f"/group/{gid}?ok=unbooked{tab_param}", status_code=303)
 
 
 @app.post('/group/{gid}/display-name/set')

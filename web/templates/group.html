@@ -76,6 +76,60 @@
       .search-clear.show {
         display: block;
       }
+      
+      /* Стили для вкладок */
+      .tabs-container {
+        margin-bottom: 20px;
+      }
+      
+      .tabs-header {
+        display: flex;
+        border-bottom: 2px solid var(--border);
+        margin-bottom: 16px;
+      }
+      
+      .tab-btn {
+        background: none;
+        border: none;
+        padding: 12px 20px;
+        cursor: pointer;
+        font-size: 16px;
+        font-weight: 500;
+        color: var(--muted);
+        border-bottom: 2px solid transparent;
+        transition: all 0.2s ease;
+      }
+      
+      .tab-btn:hover {
+        color: var(--text);
+      }
+      
+      .tab-btn.active {
+        color: var(--text);
+        border-bottom-color: var(--primary);
+      }
+      
+      .tab-content {
+        display: block;
+      }
+      
+      /* Стили для архивных мероприятий */
+      .archived-event {
+        opacity: 0.7;
+        background: #374151 !important;
+      }
+      
+      .archived-event .event-title a {
+        color: #9ca3af !important;
+      }
+      
+      .archived-event .event-date {
+        color: #6b7280 !important;
+      }
+      
+      .archived-event .responsible {
+        color: #6b7280 !important;
+      }
     </style>
   </head>
   <body>
@@ -96,17 +150,29 @@
       <div class="meta-line">Роль: {{ role }}</div>
       <div class="meta-line">Мероприятий: {{ event_count }}</div>
 
-      <h3>Мероприятия</h3>
-      {% if not events %}
-        <div class="empty">Пока нет мероприятий</div>
-      {% else %}
-        <div>
-          <div class="search-container">
-            <input type="text" id="eventSearch" class="search-box" placeholder="🔍 Поиск мероприятий..." />
-            <button type="button" id="eventSearchClear" class="search-clear">✕</button>
-          </div>
-          <div id="eventsList">
-            {% for e in events %}
+      <!-- Вкладки для мероприятий -->
+      <div class="tabs-container">
+        <div class="tabs-header">
+          <button class="tab-btn {% if active_tab == 'active' %}active{% endif %}" id="active-tab" onclick="switchEventTab('active')">
+            Активные мероприятия ({{ active_events|length }})
+          </button>
+          <button class="tab-btn {% if active_tab == 'archived' %}active{% endif %}" id="archived-tab" onclick="switchEventTab('archived')">
+            Архив ({{ archived_events|length }})
+          </button>
+        </div>
+        
+        <!-- Активные мероприятия -->
+        <div class="tab-content" id="active-events" {% if active_tab != 'active' %}style="display: none;"{% endif %}>
+          {% if not active_events %}
+            <div class="empty">Нет активных мероприятий</div>
+          {% else %}
+            <div>
+              <div class="search-container">
+                <input type="text" id="eventSearch" class="search-box" placeholder="🔍 Поиск мероприятий..." />
+                <button type="button" id="eventSearchClear" class="search-clear">✕</button>
+              </div>
+              <div id="eventsList">
+                {% for e in active_events %}
               <div class="event-card" data-name="{{ e.name.lower() }}" data-date="{{ e.time_display.lower() }}" data-responsible="{{ e.responsible_name.lower() if e.responsible_name else '' }}">
                 <div class="event-head">
                   <div class="event-title"><a class="link" href="/group/{{ group[0] }}/events/{{ e.id }}{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="text-decoration:none;">{{ e.name }}</a></div>
@@ -179,10 +245,80 @@
                 </div>
               {% endif %}
             </div>
-            {% endfor %}
-          </div>
+                {% endfor %}
+              </div>
+            </div>
+          {% endif %}
         </div>
-      {% endif %}
+        
+        <!-- Архивные мероприятия -->
+        <div class="tab-content" id="archived-events" {% if active_tab != 'archived' %}style="display: none;"{% endif %}>
+          {% if not archived_events %}
+            <div class="empty">Нет архивных мероприятий</div>
+          {% else %}
+            <div>
+              <div class="search-container">
+                <input type="text" id="archivedEventSearch" class="search-box" placeholder="🔍 Поиск в архиве..." />
+                <button type="button" id="archivedEventSearchClear" class="search-clear">✕</button>
+              </div>
+              <div id="archivedEventsList">
+                {% for e in archived_events %}
+              <div class="event-card archived-event" data-name="{{ e.name.lower() }}" data-date="{{ e.time_display.lower() }}" data-responsible="{{ e.responsible_name.lower() if e.responsible_name else '' }}">
+                <div class="event-head">
+                  <div class="event-title"><a class="link" href="/group/{{ group[0] }}/events/{{ e.id }}{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="text-decoration:none;">{{ e.name }}</a></div>
+                  <div class="event-date">{{ e.time_display }}</div>
+                </div>
+                {% if e.responsible_name %}
+                  <div class="responsible">Ответственный: {{ e.responsible_name }}</div>
+                {% endif %}
+              {% if is_admin %}
+                <a class="gear" href="/group/{{ group[0] }}/events/{{ e.id }}/settings{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Настройки оповещений">🔔</a>
+                <form method="post" action="/group/{{ group[0] }}/events/{{ e.id }}/update-from-card{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="margin-top:8px;">
+                  <div class="row">
+                    <input class="name-input" type="text" name="name" placeholder="Название" value="{{ e.name }}" />
+                    <input class="time-input" type="datetime-local" name="time" value="{{ e.time_input }}" />
+                  </div>
+                  <div class="actions">
+                    {% if member_options and member_options|length > 0 %}
+                      <div class="autocomplete-container">
+                        <input class="autocomplete-input" type="text" placeholder="— ответственный —" 
+                               value="{% if e.responsible_user_id %}{{ member_options|selectattr('0', 'equalto', e.responsible_user_id)|map(attribute='1')|first }}{% endif %}"
+                               data-user-id="{% if e.responsible_user_id %}{{ e.responsible_user_id }}{% else %}0{% endif %}"
+                               autocomplete="off">
+                        <input type="hidden" name="responsible_user_id" value="{% if e.responsible_user_id %}{{ e.responsible_user_id }}{% else %}0{% endif %}">
+                        <div class="autocomplete-dropdown" style="display: none;">
+                          <div class="autocomplete-option" data-value="0">— ответственный —</div>
+                          {% for uid, label in member_options %}
+                            <div class="autocomplete-option" data-value="{{ uid }}">{{ label }}</div>
+                          {% endfor %}
+                        </div>
+                      </div>
+                    {% endif %}
+                  </div>
+                  <div class="actions" style="justify-content: flex-end; margin-top: 8px; margin-right: -8px;">
+                    <button class="btn" type="submit">Сохранить</button>
+                    <form method="post" action="/group/{{ group[0] }}/events/{{ e.id }}/delete" style="display: inline;">
+                      <button class="btn" type="submit" style="background: var(--danger);">Удалить</button>
+                    </form>
+                  </div>
+                </form>
+              {% else %}
+                {% set bookings = bookings_map.get(e.id, []) %}
+                {% if bookings %}
+                  <div class="meta-line" style="margin-top:6px;">Забронировали: 
+                    {% for uid, nm in bookings %}
+                      {{ nm }}{% if not loop.last %}, {% endif %}
+                    {% endfor %}
+                  </div>
+                {% endif %}
+              {% endif %}
+            </div>
+                {% endfor %}
+              </div>
+            </div>
+          {% endif %}
+        </div>
+      </div>
 
       {% if is_admin %}
         <h3>Добавить новое мероприятие</h3>
@@ -279,6 +415,14 @@
             // Initialize autocomplete for existing dropdowns
             document.querySelectorAll('.autocomplete-container').forEach(initAutocomplete);
             
+            // Add date change listeners for tab movement
+            document.querySelectorAll('input[name="time"]').forEach(input => {
+              input.addEventListener('change', function() {
+                // Small delay to allow the form to process
+                setTimeout(checkEventTabMovement, 100);
+              });
+            });
+            
             // start with one row
             addRow();
             updateDeleteButtons();
@@ -324,6 +468,47 @@
               }
             }
           })();
+          
+          // Archived events search functionality
+          (function() {
+            const searchInput = document.getElementById('archivedEventSearch');
+            const searchClear = document.getElementById('archivedEventSearchClear');
+            const eventsList = document.getElementById('archivedEventsList');
+            
+            if (searchInput && eventsList) {
+              function updateArchivedEventSearch() {
+                const query = searchInput.value.toLowerCase().trim();
+                const events = eventsList.querySelectorAll('.event-card');
+                
+                events.forEach(event => {
+                  const name = event.getAttribute('data-name') || '';
+                  const date = event.getAttribute('data-date') || '';
+                  const responsible = event.getAttribute('data-responsible') || '';
+                  
+                  const matches = name.includes(query) || 
+                                date.includes(query) || 
+                                responsible.includes(query);
+                  
+                  event.style.display = matches ? 'block' : 'none';
+                });
+                
+                // Show/hide clear button
+                if (searchClear) {
+                  searchClear.classList.toggle('show', query.length > 0);
+                }
+              }
+              
+              searchInput.addEventListener('input', updateArchivedEventSearch);
+              
+              if (searchClear) {
+                searchClear.addEventListener('click', function() {
+                  searchInput.value = '';
+                  updateArchivedEventSearch();
+                  searchInput.focus();
+                });
+              }
+            }
+          })();
         </script>
       {% endif %}
     </div>
@@ -346,22 +531,42 @@
     </div>
 
     <script>
-      // Add tg_id to all forms automatically
+      // Add tg_id and tab to all forms automatically
       function addTgIdToForms() {
         const tgId = new URLSearchParams(window.location.search).get('tg_id');
-        if (tgId && tgId !== 'None') {
-          const forms = document.querySelectorAll('form');
-          forms.forEach(form => {
-            // Check if form already has tg_id input
-            if (!form.querySelector('input[name="tg_id"]')) {
-              const input = document.createElement('input');
-              input.type = 'hidden';
-              input.name = 'tg_id';
-              input.value = tgId;
-              form.appendChild(input);
-            }
-          });
-        }
+        const currentTab = new URLSearchParams(window.location.search).get('tab') || 'active';
+        
+        // Remove all existing tab inputs first
+        document.querySelectorAll('input[name="tab"]').forEach(input => {
+          input.remove();
+        });
+        
+        const forms = document.querySelectorAll('form');
+        forms.forEach(form => {
+          // Add tg_id if not present
+          if (tgId && tgId !== 'None' && !form.querySelector('input[name="tg_id"]')) {
+            const input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = 'tg_id';
+            input.value = tgId;
+            form.appendChild(input);
+          }
+          
+          // Add tab parameter only to forms in the currently visible tab
+          const isInActiveTab = form.closest('#active-events');
+          const isInArchivedTab = form.closest('#archived-events');
+          
+          if (currentTab === 'archived' && isInArchivedTab) {
+            const input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = 'tab';
+            input.value = 'archived';
+            form.appendChild(input);
+          } else if (currentTab === 'active' && isInActiveTab) {
+            // For active tab, we don't add tab parameter (it's the default)
+            // But we ensure no tab parameter exists
+          }
+        });
       }
       
       (function(){
@@ -393,6 +598,97 @@
           }, 3000);
         }
       })();
+
+      // Function to switch between event tabs
+      function switchEventTab(tabName) {
+        // Hide all tab contents
+        document.querySelectorAll('.tab-content').forEach(content => {
+          content.style.display = 'none';
+        });
+        
+        // Remove active class from all buttons
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+          btn.classList.remove('active');
+        });
+        
+        // Show selected tab content
+        if (tabName === 'active') {
+          document.getElementById('active-events').style.display = 'block';
+          document.getElementById('active-tab').classList.add('active');
+        } else if (tabName === 'archived') {
+          document.getElementById('archived-events').style.display = 'block';
+          document.getElementById('archived-tab').classList.add('active');
+        }
+        
+        // Update URL with tab parameter
+        const url = new URL(window.location.href);
+        if (tabName === 'active') {
+          url.searchParams.delete('tab');
+        } else {
+          url.searchParams.set('tab', tabName);
+        }
+        window.history.replaceState({}, '', url.toString());
+        
+        // Re-add form parameters for the new tab
+        addTgIdToForms();
+      }
+
+      // Function to check if event should be moved between tabs after date change
+      function checkEventTabMovement() {
+        const now = new Date();
+        const activeEvents = document.querySelectorAll('#active-events .event-card');
+        const archivedEvents = document.querySelectorAll('#archived-events .event-card');
+        
+        // Check active events - move to archive if past
+        activeEvents.forEach(event => {
+          const timeInput = event.querySelector('input[name="time"]');
+          if (timeInput && timeInput.value) {
+            const eventTime = new Date(timeInput.value);
+            if (eventTime < now) {
+              // Move to archive
+              const archivedList = document.getElementById('archivedEventsList');
+              if (archivedList) {
+                event.classList.add('archived-event');
+                archivedList.appendChild(event);
+                updateTabCounts();
+              }
+            }
+          }
+        });
+        
+        // Check archived events - move to active if future
+        archivedEvents.forEach(event => {
+          const timeInput = event.querySelector('input[name="time"]');
+          if (timeInput && timeInput.value) {
+            const eventTime = new Date(timeInput.value);
+            if (eventTime >= now) {
+              // Move to active
+              const activeList = document.getElementById('eventsList');
+              if (activeList) {
+                event.classList.remove('archived-event');
+                activeList.appendChild(event);
+                updateTabCounts();
+              }
+            }
+          }
+        });
+      }
+
+      // Function to update tab counts
+      function updateTabCounts() {
+        const activeCount = document.querySelectorAll('#active-events .event-card').length;
+        const archivedCount = document.querySelectorAll('#archived-events .event-card').length;
+        
+        const activeTab = document.getElementById('active-tab');
+        const archivedTab = document.getElementById('archived-tab');
+        
+        if (activeTab) {
+          activeTab.textContent = `Активные мероприятия (${activeCount})`;
+        }
+        if (archivedTab) {
+          archivedTab.textContent = `Архив (${archivedCount})`;
+        }
+      }
 
       function openGroupMessageModal() {
         document.getElementById('groupMessageText').value = '';
