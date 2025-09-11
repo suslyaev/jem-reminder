@@ -130,6 +130,66 @@
       .archived-event .responsible {
         color: #6b7280 !important;
       }
+      
+      /* Стили для пагинации */
+      .pagination-container {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-top: 16px;
+        padding: 12px 0;
+        border-top: 1px solid var(--border);
+      }
+      
+      .pagination-controls {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      
+      .pagination-btn {
+        padding: 6px 12px;
+        border: 1px solid var(--border);
+        background: var(--card);
+        color: var(--text);
+        border-radius: 6px;
+        cursor: pointer;
+        text-decoration: none;
+        font-size: 14px;
+        transition: all 0.2s ease;
+      }
+      
+      .pagination-btn:hover:not(.disabled) {
+        background: var(--primary);
+        color: white;
+        border-color: var(--primary);
+      }
+      
+      .pagination-btn.disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      
+      .pagination-info {
+        color: var(--muted);
+        font-size: 14px;
+      }
+      
+      .per-page-selector {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        white-space: nowrap;
+      }
+      
+      .per-page-selector select {
+        padding: 4px 8px;
+        border: 1px solid var(--border);
+        background: var(--card);
+        color: var(--text);
+        border-radius: 4px;
+        font-size: 14px;
+      }
     </style>
   </head>
   <body>
@@ -154,10 +214,10 @@
       <div class="tabs-container">
         <div class="tabs-header">
           <button class="tab-btn {% if active_tab == 'active' %}active{% endif %}" id="active-tab" onclick="switchEventTab('active')">
-            Активные мероприятия ({{ active_events|length }})
+            Активные мероприятия ({{ active_pagination.total_items }})
           </button>
           <button class="tab-btn {% if active_tab == 'archived' %}active{% endif %}" id="archived-tab" onclick="switchEventTab('archived')">
-            Архив ({{ archived_events|length }})
+            Архив ({{ archived_pagination.total_items }})
           </button>
         </div>
         
@@ -167,6 +227,40 @@
             <div class="empty">Нет активных мероприятий</div>
           {% else %}
             <div>
+              <!-- Пагинация для активных мероприятий -->
+              {% if active_pagination.total_pages > 1 %}
+                <div class="pagination-container">
+                  <div class="pagination-controls">
+                    {% if active_pagination.has_prev %}
+                      <a href="/group/{{ group[0] }}?page={{ active_pagination.current_page - 1 }}&per_page={{ per_page }}{% if request.query_params.get('tg_id') | safe_tg_id %}&tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" class="pagination-btn">← Назад</a>
+                    {% else %}
+                      <span class="pagination-btn disabled">← Назад</span>
+                    {% endif %}
+                    
+                    <span class="pagination-info">
+                      Страница {{ active_pagination.current_page }} из {{ active_pagination.total_pages }}
+                      ({{ active_pagination.total_items }} мероприятий)
+                    </span>
+                    
+                    {% if active_pagination.has_next %}
+                      <a href="/group/{{ group[0] }}?page={{ active_pagination.current_page + 1 }}&per_page={{ per_page }}{% if request.query_params.get('tg_id') | safe_tg_id %}&tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" class="pagination-btn">Вперед →</a>
+                    {% else %}
+                      <span class="pagination-btn disabled">Вперед →</span>
+                    {% endif %}
+                  </div>
+                  
+                  <div class="per-page-selector">
+                    <label for="activePerPage">Отображать:</label>
+                    <select id="activePerPage" onchange="changePerPage(this.value, 'active')">
+                      <option value="5" {% if per_page == 5 %}selected{% endif %}>5</option>
+                      <option value="10" {% if per_page == 10 %}selected{% endif %}>10</option>
+                      <option value="20" {% if per_page == 20 %}selected{% endif %}>20</option>
+                      <option value="50" {% if per_page == 50 %}selected{% endif %}>50</option>
+                    </select>
+                  </div>
+                </div>
+              {% endif %}
+              
               <div class="search-container">
                 <input type="text" id="eventSearch" class="search-box" placeholder="🔍 Поиск мероприятий..." />
                 <button type="button" id="eventSearchClear" class="search-clear">✕</button>
@@ -257,6 +351,40 @@
             <div class="empty">Нет архивных мероприятий</div>
           {% else %}
             <div>
+              <!-- Пагинация для архивных мероприятий -->
+              {% if archived_pagination.total_pages > 1 %}
+                <div class="pagination-container">
+                  <div class="pagination-controls">
+                    {% if archived_pagination.has_prev %}
+                      <a href="/group/{{ group[0] }}?page={{ archived_pagination.current_page - 1 }}&per_page={{ per_page }}&tab=archived{% if request.query_params.get('tg_id') | safe_tg_id %}&tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" class="pagination-btn">← Назад</a>
+                    {% else %}
+                      <span class="pagination-btn disabled">← Назад</span>
+                    {% endif %}
+                    
+                    <span class="pagination-info">
+                      Страница {{ archived_pagination.current_page }} из {{ archived_pagination.total_pages }}
+                      ({{ archived_pagination.total_items }} мероприятий)
+                    </span>
+                    
+                    {% if archived_pagination.has_next %}
+                      <a href="/group/{{ group[0] }}?page={{ archived_pagination.current_page + 1 }}&per_page={{ per_page }}&tab=archived{% if request.query_params.get('tg_id') | safe_tg_id %}&tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" class="pagination-btn">Вперед →</a>
+                    {% else %}
+                      <span class="pagination-btn disabled">Вперед →</span>
+                    {% endif %}
+                  </div>
+                  
+                  <div class="per-page-selector">
+                    <label for="archivedPerPage">Отображать:</label>
+                    <select id="archivedPerPage" onchange="changePerPage(this.value, 'archived')">
+                      <option value="5" {% if per_page == 5 %}selected{% endif %}>5</option>
+                      <option value="10" {% if per_page == 10 %}selected{% endif %}>10</option>
+                      <option value="20" {% if per_page == 20 %}selected{% endif %}>20</option>
+                      <option value="50" {% if per_page == 50 %}selected{% endif %}>50</option>
+                    </select>
+                  </div>
+                </div>
+              {% endif %}
+              
               <div class="search-container">
                 <input type="text" id="archivedEventSearch" class="search-box" placeholder="🔍 Поиск в архиве..." />
                 <button type="button" id="archivedEventSearchClear" class="search-clear">✕</button>
@@ -415,13 +543,8 @@
             // Initialize autocomplete for existing dropdowns
             document.querySelectorAll('.autocomplete-container').forEach(initAutocomplete);
             
-            // Add date change listeners for tab movement
-            document.querySelectorAll('input[name="time"]').forEach(input => {
-              input.addEventListener('change', function() {
-                // Small delay to allow the form to process
-                setTimeout(checkEventTabMovement, 100);
-              });
-            });
+            // Note: Removed automatic tab movement on date change
+            // Events will only move between tabs after form submission
             
             // start with one row
             addRow();
@@ -454,6 +577,12 @@
                 // Show/hide clear button
                 if (searchClear) {
                   searchClear.classList.toggle('show', query.length > 0);
+                }
+                
+                // Hide pagination when searching
+                const pagination = eventsList.parentElement.querySelector('.pagination-container');
+                if (pagination) {
+                  pagination.style.display = query.length > 0 ? 'none' : 'flex';
                 }
               }
               
@@ -496,6 +625,12 @@
                 if (searchClear) {
                   searchClear.classList.toggle('show', query.length > 0);
                 }
+                
+                // Hide pagination when searching
+                const pagination = eventsList.parentElement.querySelector('.pagination-container');
+                if (pagination) {
+                  pagination.style.display = query.length > 0 ? 'none' : 'flex';
+                }
               }
               
               searchInput.addEventListener('input', updateArchivedEventSearch);
@@ -531,13 +666,16 @@
     </div>
 
     <script>
-      // Add tg_id and tab to all forms automatically
+      // Add tg_id, tab, and pagination parameters to all forms automatically
       function addTgIdToForms() {
-        const tgId = new URLSearchParams(window.location.search).get('tg_id');
-        const currentTab = new URLSearchParams(window.location.search).get('tab') || 'active';
+        const urlParams = new URLSearchParams(window.location.search);
+        const tgId = urlParams.get('tg_id');
+        const currentTab = urlParams.get('tab') || 'active';
+        const currentPage = urlParams.get('page') || '1';
+        const perPage = urlParams.get('per_page') || '10';
         
-        // Remove all existing tab inputs first
-        document.querySelectorAll('input[name="tab"]').forEach(input => {
+        // Remove all existing pagination and tab inputs first
+        document.querySelectorAll('input[name="tab"], input[name="page"], input[name="per_page"]').forEach(input => {
           input.remove();
         });
         
@@ -551,6 +689,19 @@
             input.value = tgId;
             form.appendChild(input);
           }
+          
+          // Add pagination parameters
+          const pageInput = document.createElement('input');
+          pageInput.type = 'hidden';
+          pageInput.name = 'page';
+          pageInput.value = currentPage;
+          form.appendChild(pageInput);
+          
+          const perPageInput = document.createElement('input');
+          perPageInput.type = 'hidden';
+          perPageInput.name = 'per_page';
+          perPageInput.value = perPage;
+          form.appendChild(perPageInput);
           
           // Add tab parameter only to forms in the currently visible tab
           const isInActiveTab = form.closest('#active-events');
@@ -633,61 +784,44 @@
         addTgIdToForms();
       }
 
-      // Function to check if event should be moved between tabs after date change
-      function checkEventTabMovement() {
-        const now = new Date();
-        const activeEvents = document.querySelectorAll('#active-events .event-card');
-        const archivedEvents = document.querySelectorAll('#archived-events .event-card');
-        
-        // Check active events - move to archive if past
-        activeEvents.forEach(event => {
-          const timeInput = event.querySelector('input[name="time"]');
-          if (timeInput && timeInput.value) {
-            const eventTime = new Date(timeInput.value);
-            if (eventTime < now) {
-              // Move to archive
-              const archivedList = document.getElementById('archivedEventsList');
-              if (archivedList) {
-                event.classList.add('archived-event');
-                archivedList.appendChild(event);
-                updateTabCounts();
-              }
-            }
-          }
-        });
-        
-        // Check archived events - move to active if future
-        archivedEvents.forEach(event => {
-          const timeInput = event.querySelector('input[name="time"]');
-          if (timeInput && timeInput.value) {
-            const eventTime = new Date(timeInput.value);
-            if (eventTime >= now) {
-              // Move to active
-              const activeList = document.getElementById('eventsList');
-              if (activeList) {
-                event.classList.remove('archived-event');
-                activeList.appendChild(event);
-                updateTabCounts();
-              }
-            }
-          }
-        });
-      }
+      // Note: Removed checkEventTabMovement function
+      // Events will only move between tabs after form submission and page reload
 
       // Function to update tab counts
       function updateTabCounts() {
-        const activeCount = document.querySelectorAll('#active-events .event-card').length;
-        const archivedCount = document.querySelectorAll('#archived-events .event-card').length;
+        // Get total counts from pagination info
+        const activePaginationInfo = document.querySelector('#active-events .pagination-info');
+        const archivedPaginationInfo = document.querySelector('#archived-events .pagination-info');
         
         const activeTab = document.getElementById('active-tab');
         const archivedTab = document.getElementById('archived-tab');
         
-        if (activeTab) {
+        if (activeTab && activePaginationInfo) {
+          const match = activePaginationInfo.textContent.match(/\((\d+) мероприятий\)/);
+          const activeCount = match ? match[1] : document.querySelectorAll('#active-events .event-card').length;
           activeTab.textContent = `Активные мероприятия (${activeCount})`;
         }
-        if (archivedTab) {
+        
+        if (archivedTab && archivedPaginationInfo) {
+          const match = archivedPaginationInfo.textContent.match(/\((\d+) мероприятий\)/);
+          const archivedCount = match ? match[1] : document.querySelectorAll('#archived-events .event-card').length;
           archivedTab.textContent = `Архив (${archivedCount})`;
         }
+      }
+
+      // Function to change items per page
+      function changePerPage(perPage, tab) {
+        const url = new URL(window.location.href);
+        url.searchParams.set('per_page', perPage);
+        url.searchParams.set('page', '1'); // Reset to first page
+        
+        if (tab === 'archived') {
+          url.searchParams.set('tab', 'archived');
+        } else {
+          url.searchParams.delete('tab');
+        }
+        
+        window.location.href = url.toString();
       }
 
       function openGroupMessageModal() {

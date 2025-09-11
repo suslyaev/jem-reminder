@@ -346,7 +346,7 @@ async def index(request: Request):
 
 
 @app.get('/group/{gid}', response_class=HTMLResponse)
-async def group_view(request: Request, gid: int, tab: str = None):
+async def group_view(request: Request, gid: int, tab: str = None, page: int = 1, per_page: int = 10):
     urow = _require_user(request)
     user_id = urow[0]
     role = RoleRepo.get_user_role(user_id, gid)
@@ -390,8 +390,8 @@ async def group_view(request: Request, gid: int, tab: str = None):
     from datetime import datetime
     now = datetime.now()
     
-    active_events = []
-    archived_events = []
+    all_active_events = []
+    all_archived_events = []
     
     for eid, name, time_str, resp_uid in events:
         disp, input_val = _format_time_display(time_str)
@@ -410,15 +410,41 @@ async def group_view(request: Request, gid: int, tab: str = None):
             # Парсим время мероприятия
             event_time = datetime.strptime(time_str, "%Y-%m-%d %H:%M")
             if event_time < now:
-                archived_events.append(event_data)
+                all_archived_events.append(event_data)
             else:
-                active_events.append(event_data)
+                all_active_events.append(event_data)
         except ValueError:
             # Если не удалось распарсить время, считаем активным
-            active_events.append(event_data)
+            all_active_events.append(event_data)
+    
+    # Применяем пагинацию
+    def paginate_events(events_list, current_page, items_per_page):
+        total_items = len(events_list)
+        total_pages = (total_items + items_per_page - 1) // items_per_page
+        start_idx = (current_page - 1) * items_per_page
+        end_idx = start_idx + items_per_page
+        paginated_events = events_list[start_idx:end_idx]
+        
+        return {
+            'events': paginated_events,
+            'total_items': total_items,
+            'total_pages': total_pages,
+            'current_page': current_page,
+            'items_per_page': items_per_page,
+            'has_prev': current_page > 1,
+            'has_next': current_page < total_pages
+        }
+    
+    # Пагинация для активных мероприятий
+    active_pagination = paginate_events(all_active_events, page, per_page)
+    active_events = active_pagination['events']
+    
+    # Пагинация для архивных мероприятий
+    archived_pagination = paginate_events(all_archived_events, page, per_page)
+    archived_events = archived_pagination['events']
     
     event_count = GroupRepo.count_group_events(gid)
-    return render('group.html', group=group, role=_role_label(role or 'participant'), is_admin=is_admin, active_events=active_events, archived_events=archived_events, booked_ids=booked_ids, display_name=display_name, bookings_map=bookings_map, member_options=member_options, event_count=event_count, active_tab=tab or 'active', request=request)
+    return render('group.html', group=group, role=_role_label(role or 'participant'), is_admin=is_admin, active_events=active_events, archived_events=archived_events, active_pagination=active_pagination, archived_pagination=archived_pagination, booked_ids=booked_ids, display_name=display_name, bookings_map=bookings_map, member_options=member_options, event_count=event_count, active_tab=tab or 'active', current_page=page, per_page=per_page, request=request)
 
 
 # --- Event CRUD ---
@@ -503,7 +529,7 @@ async def update_event(request: Request, gid: int, eid: int, name: str | None = 
 
 
 @app.post('/group/{gid}/events/{eid}/update-from-card')
-async def update_event_from_card(request: Request, gid: int, eid: int, name: str | None = Form(None), time: str | None = Form(None), responsible_user_id: int | None = Form(None), tab: str | None = Form(None)):
+async def update_event_from_card(request: Request, gid: int, eid: int, name: str | None = Form(None), time: str | None = Form(None), responsible_user_id: int | None = Form(None), tab: str | None = Form(None), page: int | None = Form(None), per_page: int | None = Form(None)):
     urow = _require_user(request)
     user_id = urow[0]
     _require_admin(user_id, gid)
@@ -516,8 +542,19 @@ async def update_event_from_card(request: Request, gid: int, eid: int, name: str
         # If assigning a responsible user, ensure their personal notifications are created from group settings
         if responsible_user_id and responsible_user_id != 0:
             PersonalEventNotificationRepo.create_from_group_for_user(eid, gid, responsible_user_id)
-    tab_param = f"&tab={tab}" if tab else ""
-    return RedirectResponse(url=f"/group/{gid}?ok=event_updated{tab_param}", status_code=303)
+    # Build redirect URL with all parameters
+    params = []
+    if tab:
+        params.append(f"tab={tab}")
+    if page:
+        params.append(f"page={page}")
+    if per_page:
+        params.append(f"per_page={per_page}")
+    
+    param_string = "&".join(params)
+    param_string = f"?ok=event_updated&{param_string}" if param_string else "?ok=event_updated"
+    
+    return RedirectResponse(url=f"/group/{gid}{param_string}", status_code=303)
 
 
 # --- Settings: notifications & admins ---
@@ -983,7 +1020,7 @@ async def delete_personal_event_notification(request: Request, gid: int, eid: in
     return RedirectResponse(f"/group/{gid}/events/{eid}/settings?ok=personal_notification_deleted", status_code=303)
 
 @app.post('/group/{gid}/events/{eid}/delete')
-async def delete_event(request: Request, gid: int, eid: int, tab: str | None = Form(None)):
+async def delete_event(request: Request, gid: int, eid: int, tab: str | None = Form(None), page: int | None = Form(None), per_page: int | None = Form(None)):
     urow = _require_user(request)
     user_id = urow[0]
     _require_admin(user_id, gid)
@@ -993,11 +1030,22 @@ async def delete_event(request: Request, gid: int, eid: int, tab: str | None = F
     result = EventRepo.delete(eid)
     print(f"DELETE RESULT: {result}")
     
-    tab_param = f"&tab={tab}" if tab else ""
-    return RedirectResponse(f"/group/{gid}?ok=event_deleted{tab_param}", status_code=303)
+    # Build redirect URL with all parameters
+    params = []
+    if tab:
+        params.append(f"tab={tab}")
+    if page:
+        params.append(f"page={page}")
+    if per_page:
+        params.append(f"per_page={per_page}")
+    
+    param_string = "&".join(params)
+    param_string = f"?ok=event_deleted&{param_string}" if param_string else "?ok=event_deleted"
+    
+    return RedirectResponse(f"/group/{gid}{param_string}", status_code=303)
 
 @app.post('/group/{gid}/events/{eid}/book')
-async def book_event(request: Request, gid: int, eid: int, tab: str | None = Form(None)):
+async def book_event(request: Request, gid: int, eid: int, tab: str | None = Form(None), page: int | None = Form(None), per_page: int | None = Form(None)):
     urow = _require_user(request)
     user_id = urow[0]
     
@@ -1019,8 +1067,19 @@ async def book_event(request: Request, gid: int, eid: int, tab: str | None = For
     PersonalEventNotificationRepo.create_from_group_for_user(eid, gid, user_id)
     
     print(f"BOOKING SUCCESS")
-    tab_param = f"&tab={tab}" if tab else ""
-    return RedirectResponse(f"/group/{gid}?ok=event_booked{tab_param}", status_code=303)
+    # Build redirect URL with all parameters
+    params = []
+    if tab:
+        params.append(f"tab={tab}")
+    if page:
+        params.append(f"page={page}")
+    if per_page:
+        params.append(f"per_page={per_page}")
+    
+    param_string = "&".join(params)
+    param_string = f"?ok=event_booked&{param_string}" if param_string else "?ok=event_booked"
+    
+    return RedirectResponse(f"/group/{gid}{param_string}", status_code=303)
 
 
 @app.get('/group/{gid}/events/{eid}', response_class=HTMLResponse)
@@ -1038,12 +1097,23 @@ async def event_detail(request: Request, gid: int, eid: int):
 
 
 @app.post('/group/{gid}/events/{eid}/unbook')
-async def unbook_event(request: Request, gid: int, eid: int, tab: str | None = Form(None)):
+async def unbook_event(request: Request, gid: int, eid: int, tab: str | None = Form(None), page: int | None = Form(None), per_page: int | None = Form(None)):
     urow = _require_user(request)
     user_id = urow[0]
     BookingRepo.remove_booking(user_id, eid)
-    tab_param = f"&tab={tab}" if tab else ""
-    return RedirectResponse(url=f"/group/{gid}?ok=unbooked{tab_param}", status_code=303)
+    # Build redirect URL with all parameters
+    params = []
+    if tab:
+        params.append(f"tab={tab}")
+    if page:
+        params.append(f"page={page}")
+    if per_page:
+        params.append(f"per_page={per_page}")
+    
+    param_string = "&".join(params)
+    param_string = f"?ok=unbooked&{param_string}" if param_string else "?ok=unbooked"
+    
+    return RedirectResponse(url=f"/group/{gid}{param_string}", status_code=303)
 
 
 @app.post('/group/{gid}/display-name/set')
