@@ -533,6 +533,16 @@ class EventRepo:
             conn.commit()
 
     @staticmethod
+    def update_responsible(event_id: int, responsible_user_id: Optional[int]) -> None:
+        print(f"EventRepo.update_responsible: event_id={event_id}, responsible_user_id={responsible_user_id}")
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("UPDATE events SET responsible_user_id = ? WHERE id = ?", (responsible_user_id, event_id))
+            rows_affected = cur.rowcount
+            print(f"EventRepo.update_responsible: rows affected = {rows_affected}")
+            conn.commit()
+
+    @staticmethod
     def list_by_group_between(group_id: int, start_iso: str, end_iso: str) -> List[Tuple]:
         """Return events in group between [start_iso, end_iso], ordered by time."""
         with get_conn() as conn:

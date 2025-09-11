@@ -364,6 +364,7 @@ async def group_view(request: Request, gid: int, tab: str = None, page: int = 1,
     group = GroupRepo.get_by_id(gid)
     display_name = DisplayNameRepo.get_display_name(gid, user_id)
     booked_ids = {eid for (eid, _, _, _) in events if BookingRepo.has_booking(user_id, eid)}
+    responsible_ids = {eid for (eid, _, _, responsible_user_id) in events if responsible_user_id == user_id}
     is_admin = (role in ("owner", "admin", "superadmin")) if role else False
     bookings_map = {eid: BookingRepo.list_event_bookings_with_names(gid, eid) for (eid, _, _, _) in events}
     member_rows = GroupRepo.list_group_members(gid)
@@ -444,7 +445,7 @@ async def group_view(request: Request, gid: int, tab: str = None, page: int = 1,
     archived_events = archived_pagination['events']
     
     event_count = GroupRepo.count_group_events(gid)
-    return render('group.html', group=group, role=_role_label(role or 'participant'), is_admin=is_admin, active_events=active_events, archived_events=archived_events, active_pagination=active_pagination, archived_pagination=archived_pagination, booked_ids=booked_ids, display_name=display_name, bookings_map=bookings_map, member_options=member_options, event_count=event_count, active_tab=tab or 'active', current_page=page, per_page=per_page, request=request)
+    return render('group.html', group=group, role=_role_label(role or 'participant'), is_admin=is_admin, active_events=active_events, archived_events=archived_events, active_pagination=active_pagination, archived_pagination=archived_pagination, booked_ids=booked_ids, responsible_ids=responsible_ids, display_name=display_name, bookings_map=bookings_map, member_options=member_options, event_count=event_count, active_tab=tab or 'active', current_page=page, per_page=per_page, request=request)
 
 
 # --- Event CRUD ---
@@ -729,6 +730,7 @@ async def send_message_to_user(request: Request, gid: int, recipient_id: int = F
 
 @app.post('/group/{gid}/send-group-message')
 async def send_message_to_group(request: Request, gid: int, message: str = Form(...)):
+    tg_id = request.query_params.get('tg_id')
     print(f"send-group-message: tg_id={tg_id}, gid={gid}, message={message}")
     urow = _require_user(request)
     user_id = urow[0]
@@ -1049,18 +1051,29 @@ async def book_event(request: Request, gid: int, eid: int, tab: str | None = For
     urow = _require_user(request)
     user_id = urow[0]
     
+    print(f"=== BOOK EVENT START ===")
     print(f"BOOK EVENT: eid={eid}, gid={gid}, user_id={user_id}")
     
-    # Check if event exists and is not already booked
+    # Check if event exists
     event = EventRepo.get_by_id(eid)
-    print(f"EVENT: {event}")
-    if not event or event[4]:  # event doesn't exist or already has responsible person
-        print(f"BOOKING ERROR: event={event}, has_responsible={event[4] if event else 'no event'}")
+    print(f"EVENT BEFORE: {event}")
+    if not event:
+        print(f"BOOKING ERROR: event not found")
+        return RedirectResponse(f"/group/{gid}?ok=booking_error", status_code=303)
+    
+    # Check if user is already responsible
+    if event[4] == user_id:  # user is already responsible
+        print(f"BOOKING ERROR: user {user_id} is already responsible for event {eid}")
         return RedirectResponse(f"/group/{gid}?ok=booking_error", status_code=303)
     
     # Book the event
     print(f"UPDATING EVENT: setting responsible to {user_id}")
-    EventRepo.update_event(eid, event[1], event[2], event[3], user_id)
+    EventRepo.update_responsible(eid, user_id)
+    
+    # Verify the update
+    event_after = EventRepo.get_by_id(eid)
+    print(f"EVENT AFTER: {event_after}")
+    
     BookingRepo.add_booking(user_id, eid)
     
     # Create personal notifications for this user
@@ -1100,6 +1113,24 @@ async def event_detail(request: Request, gid: int, eid: int):
 async def unbook_event(request: Request, gid: int, eid: int, tab: str | None = Form(None), page: int | None = Form(None), per_page: int | None = Form(None)):
     urow = _require_user(request)
     user_id = urow[0]
+    
+    print(f"=== UNBOOK EVENT START ===")
+    print(f"UNBOOK EVENT: eid={eid}, gid={gid}, user_id={user_id}")
+    
+    # Get event and check if user is responsible
+    event = EventRepo.get_by_id(eid)
+    print(f"EVENT BEFORE: {event}")
+    if event and event[4] == user_id:  # user is responsible
+        print(f"REMOVING RESPONSIBILITY: user {user_id} is responsible for event {eid}")
+        # Remove responsibility (set to None)
+        EventRepo.update_responsible(eid, None)
+        
+        # Verify the update
+        event_after = EventRepo.get_by_id(eid)
+        print(f"EVENT AFTER: {event_after}")
+    else:
+        print(f"USER NOT RESPONSIBLE: user {user_id} is not responsible for event {eid}")
+    
     BookingRepo.remove_booking(user_id, eid)
     # Build redirect URL with all parameters
     params = []

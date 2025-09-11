@@ -329,14 +329,10 @@
                     {% endif %}
                   </div>
                   <div class="actions" style="justify-content: flex-end; margin-top: 8px; margin-right: -8px;">
-                    {% if not e.responsible_user_id and not e.has_any_bookings %}
-                      <form method="post" action="/group/{{ group[0] }}/events/{{ e.id }}/book" style="display: inline;">
-                        <button class="btn" type="submit">Забронировать</button>
-                      </form>
-                    {% elif e.id in booked_ids %}
-                      <form method="post" action="/group/{{ group[0] }}/events/{{ e.id }}/unbook" style="display: inline;">
-                        <button class="btn" type="submit" style="background: var(--danger);">Снять бронь</button>
-                      </form>
+                    {% if e.id in responsible_ids %}
+                      <button class="btn" type="button" onclick="unbookEvent({{ e.id }})" style="background: var(--danger);">Отменить бронь</button>
+                    {% elif not e.responsible_user_id %}
+                      <button class="btn" type="button" onclick="bookEvent({{ e.id }})">Забронировать</button>
                     {% endif %}
                     <button class="btn" type="submit">Сохранить</button>
                     <form method="post" action="/group/{{ group[0] }}/events/{{ e.id }}/delete" style="display: inline;">
@@ -354,16 +350,10 @@
                   </div>
                 {% endif %}
                 <div class="actions" style="justify-content: flex-end; margin-top: 8px;">
-                  {% if e.id in booked_ids %}
-                    <form method="post" action="/group/{{ group[0] }}/events/{{ e.id }}/unbook?tg_id={{ request.query_params.get('tg_id') }}" style="display: inline;">
-                      <button class="btn" type="submit" style="background: var(--danger);">Снять бронь</button>
-                    </form>
-                  {% else %}
-                    {% if not e.has_any_bookings %}
-                      <form method="post" action="/group/{{ group[0] }}/events/{{ e.id }}/book" style="display: inline;">
-                        <button class="btn" type="submit">Забронировать</button>
-                      </form>
-                    {% endif %}
+                  {% if e.id in responsible_ids %}
+                    <button class="btn" type="button" onclick="unbookEvent({{ e.id }})" style="background: var(--danger);">Отменить бронь</button>
+                  {% elif not e.responsible_user_id %}
+                    <button class="btn" type="button" onclick="bookEvent({{ e.id }})">Забронировать</button>
                   {% endif %}
                 </div>
               {% endif %}
@@ -972,10 +962,87 @@
         document.getElementById('groupMessageModal').style.display = 'none';
       }
 
+      function showToast(message, type = 'success') {
+        const toast = document.getElementById('toast');
+        toast.textContent = message;
+        
+        // Set color based on message type
+        if (type === 'error') {
+          toast.style.background = '#ef4444'; // Red for errors
+        } else {
+          toast.style.background = '#16a34a'; // Green for success
+        }
+        
+        toast.style.display = 'block';
+        
+        // Auto-hide toast after 3 seconds
+        setTimeout(() => {
+          if (toast) {
+            toast.style.display = 'none';
+          }
+        }, 3000);
+      }
+
+      function bookEvent(eventId) {
+        console.log('Booking event:', eventId);
+        const formData = new FormData();
+        formData.append('tab', '{{ active_tab }}');
+        formData.append('page', '{{ current_page }}');
+        formData.append('per_page', '{{ per_page }}');
+        
+        fetch('/group/{{ group[0] }}/events/' + eventId + '/book{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}', {
+          method: 'POST',
+          body: formData
+        })
+        .then(response => {
+          if (response.ok) {
+            showToast('Мероприятие забронировано', 'success');
+            // Reload page to show updated state
+            setTimeout(() => {
+              window.location.reload();
+            }, 1000);
+          } else {
+            showToast('Ошибка бронирования', 'error');
+          }
+        })
+        .catch(error => {
+          console.error('Error:', error);
+          showToast('Ошибка бронирования', 'error');
+        });
+      }
+
+      function unbookEvent(eventId) {
+        console.log('Unbooking event:', eventId);
+        const formData = new FormData();
+        formData.append('tab', '{{ active_tab }}');
+        formData.append('page', '{{ current_page }}');
+        formData.append('per_page', '{{ per_page }}');
+        
+        fetch('/group/{{ group[0] }}/events/' + eventId + '/unbook{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}', {
+          method: 'POST',
+          body: formData
+        })
+        .then(response => {
+          if (response.ok) {
+            showToast('Бронь отменена', 'success');
+            // Reload page to show updated state
+            setTimeout(() => {
+              window.location.reload();
+            }, 1000);
+          } else {
+            showToast('Ошибка отмены брони', 'error');
+          }
+        })
+        .catch(error => {
+          console.error('Error:', error);
+          showToast('Ошибка отмены брони', 'error');
+        });
+      }
+
       function sendGroupMessage() {
         const message = document.getElementById('groupMessageText').value.trim();
         if (!message) {
-          alert('Введите сообщение');
+          showToast('Введите сообщение', 'error');
           return;
         }
 
@@ -990,15 +1057,15 @@
         .then(response => response.json())
         .then(data => {
           if (data.success) {
-            alert('Сообщение отправлено в группу');
+            showToast('Сообщение отправлено в группу', 'success');
             closeGroupMessageModal();
           } else {
-            alert('Ошибка отправки: ' + (data.error || 'Неизвестная ошибка'));
+            showToast('Ошибка отправки: ' + (data.error || 'Неизвестная ошибка'), 'error');
           }
         })
         .catch(error => {
           console.error('Error:', error);
-          alert('Ошибка отправки сообщения');
+          showToast('Ошибка отправки сообщения', 'error');
         });
       }
 
