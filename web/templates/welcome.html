@@ -10,13 +10,9 @@
     <div class="container">
       <h1>JEM Reminder</h1>
       <div class="user-info">
-        <p><strong>ID пользователя:</strong> <span id="uid">{{ user_info.telegram_id if user_info else 'Не определен' }}</span></p>
-        {% if user_info and user_info.username %}
-        <p><strong>Никнейм:</strong> @{{ user_info.username }}</p>
-        {% endif %}
-        {% if user_info and (user_info.first_name or user_info.last_name) %}
-        <p><strong>Имя:</strong> {{ user_info.first_name or '' }} {{ user_info.last_name or '' }}</p>
-        {% endif %}
+        <p><strong>ID пользователя:</strong> <span id="uid">Не определен</span></p>
+        <p><strong>Никнейм:</strong> Не определен</p>
+        <p><strong>Имя:</strong> Не определено</p>
       </div>
       
       <div class="instructions">
@@ -26,10 +22,13 @@
           <li>Дайте боту права администратора</li>
           <li>Создавайте события и напоминания через бота и этот интерфейс</li>
         </ol>
-      </div>
-      
-      <div class="message">
-        <p>Для локального тестирования установите переменную <code>TEST_TELEGRAM_ID</code> в файле <code>.env</code> на сервере.</p>
+        
+        <h3>Если вы видите эту страницу:</h3>
+        <ul>
+          <li>Убедитесь, что открываете приложение через Telegram</li>
+          <li>Проверьте, что бот добавлен в группу и имеет права администратора</li>
+          <li>Для локального тестирования установите переменную <code>TEST_TELEGRAM_ID</code> в файле <code>.env</code></li>
+        </ul>
       </div>
     </div>
 
@@ -41,13 +40,29 @@
             const data = Telegram.WebApp.initDataUnsafe || {};
             const user = data.user || null;
             if (user && user.id) {
-              // Показать ID на странице
-              var el = document.getElementById('uid');
-              if (el) el.textContent = String(user.id);
-              // Если в URL нет tg_id – добавить и перезагрузить
+              // Показать данные пользователя на странице
+              var uidEl = document.getElementById('uid');
+              if (uidEl) uidEl.textContent = String(user.id);
+              
+              // Показать никнейм если есть
+              if (user.username) {
+                var usernameEl = document.querySelector('.user-info p:nth-child(2)');
+                if (usernameEl) usernameEl.innerHTML = '<strong>Никнейм:</strong> @' + user.username;
+              }
+              
+              // Показать имя если есть
+              if (user.first_name || user.last_name) {
+                var nameEl = document.querySelector('.user-info p:nth-child(3)');
+                if (nameEl) {
+                  var fullName = (user.first_name || '') + ' ' + (user.last_name || '');
+                  nameEl.innerHTML = '<strong>Имя:</strong> ' + fullName.trim();
+                }
+              }
+              
+              // Если в URL нет tgWebAppData – добавить и перезагрузить
               var params = new URLSearchParams(window.location.search);
-              if (!params.get('tg_id')) {
-                params.set('tg_id', String(user.id));
+              if (!params.get('tgWebAppData')) {
+                params.set('tgWebAppData', Telegram.WebApp.initData);
                 var url = window.location.pathname + '?' + params.toString();
                 window.location.replace(url);
               }

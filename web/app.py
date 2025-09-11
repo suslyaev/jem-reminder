@@ -276,30 +276,73 @@ def clear_user_session(request: Request):
 
 @app.get('/', response_class=HTMLResponse)
 async def index(request: Request):
-    try:
-        urow = _require_user(request)
-        user_id = urow[0]
-        # urow: (id, telegram_id, username, phone, first_name, last_name)
-        username = urow[2]
-        phone = urow[3]
-        first_name = urow[4]
-        last_name = urow[5]
-        telegram_id = urow[1]
-        display = first_name or username or str(telegram_id)
-        if first_name and last_name:
-            display = f"{first_name} {last_name}"
-        groups = GroupRepo.list_user_groups_with_roles(user_id)
-        groups_with_counts = []
-        for gid, title, role, chat_id in groups:
-            groups_with_counts.append((gid, title, role, GroupRepo.count_group_events(gid), _role_label(role), chat_id))
-        return render('index.html', groups=groups_with_counts, user_info={
-            'display': display,
-            'username': username,
-            'telegram_id': telegram_id,
-            'phone': phone,
-        }, request=request)
-    except HTTPException:
-        return render('welcome.html', message="Требуется авторизация", user_info=None, request=request)
+    # Сначала пытаемся получить данные из Telegram
+    telegram_user = get_telegram_user_data(request)
+    if telegram_user:
+        print(f"Authenticating from Telegram Mini App: {telegram_user['id']}")
+        # Устанавливаем сессию
+        set_user_session(request, telegram_user)
+        # Получаем пользователя из БД
+        user_row = UserRepo.get_by_telegram_id(telegram_user['id'])
+        if user_row:
+            user_id = user_row[0]
+            # user_row: (id, telegram_id, username, phone, first_name, last_name)
+            username = user_row[2]
+            phone = user_row[3]
+            first_name = user_row[4]
+            last_name = user_row[5]
+            telegram_id = user_row[1]
+            display = first_name or username or str(telegram_id)
+            if first_name and last_name:
+                display = f"{first_name} {last_name}"
+            groups = GroupRepo.list_user_groups_with_roles(user_id)
+            groups_with_counts = []
+            for gid, title, role, chat_id in groups:
+                groups_with_counts.append((gid, title, role, GroupRepo.count_group_events(gid), _role_label(role), chat_id))
+            return render('index.html', groups=groups_with_counts, user_info={
+                'display': display,
+                'username': username,
+                'telegram_id': telegram_id,
+                'phone': phone,
+            }, request=request)
+    
+    # Если данные из Telegram не пришли, пробуем из переменных окружения
+    if TEST_TELEGRAM_ID:
+        print(f"Using test Telegram ID: {TEST_TELEGRAM_ID}")
+        # Устанавливаем тестовую сессию
+        test_user_data = {
+            'id': str(TEST_TELEGRAM_ID),
+            'username': 'test_user',
+            'first_name': 'Test',
+            'last_name': 'User'
+        }
+        set_user_session(request, test_user_data)
+        # Получаем пользователя из БД
+        user_row = UserRepo.get_by_telegram_id(int(TEST_TELEGRAM_ID))
+        if user_row:
+            user_id = user_row[0]
+            # user_row: (id, telegram_id, username, phone, first_name, last_name)
+            username = user_row[2]
+            phone = user_row[3]
+            first_name = user_row[4]
+            last_name = user_row[5]
+            telegram_id = user_row[1]
+            display = first_name or username or str(telegram_id)
+            if first_name and last_name:
+                display = f"{first_name} {last_name}"
+            groups = GroupRepo.list_user_groups_with_roles(user_id)
+            groups_with_counts = []
+            for gid, title, role, chat_id in groups:
+                groups_with_counts.append((gid, title, role, GroupRepo.count_group_events(gid), _role_label(role), chat_id))
+            return render('index.html', groups=groups_with_counts, user_info={
+                'display': display,
+                'username': username,
+                'telegram_id': telegram_id,
+                'phone': phone,
+            }, request=request)
+    
+    # Если ничего не получилось, показываем стартовую страницу
+    return render('welcome.html', message="Требуется авторизация", user_info=None, request=request)
 
 
 @app.get('/group/{gid}', response_class=HTMLResponse)
