@@ -210,6 +210,15 @@
       <div class="meta-line">Роль: {{ role }}</div>
       <div class="meta-line">Мероприятий: {{ event_count }}</div>
 
+      <!-- Кнопка создания мероприятия -->
+      {% if is_admin %}
+        <div style="text-align: center; margin: 20px 0;">
+          <button class="btn" onclick="openCreateEventModal()" style="background: #16a34a; color: white; padding: 12px 24px; font-size: 16px; border-radius: 8px;">
+            ➕ Создать мероприятие
+          </button>
+        </div>
+      {% endif %}
+
       <!-- Вкладки для мероприятий -->
       <div class="tabs-container">
         <div class="tabs-header">
@@ -448,15 +457,18 @@
         </div>
       </div>
 
+      <!-- Old form hidden - now using modal -->
       {% if is_admin %}
-        <h3>Добавить новое мероприятие</h3>
-        <form id="bulkForm" method="post" action="/group/{{ group[0] }}/events/create-multiple{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">
-          <div id="rows"></div>
-          <div style="margin-top:8px; display:flex; gap:8px;">
-            <button class="btn" type="button" id="addRow">＋ Добавить строку</button>
-            <button class="btn" type="submit">Создать</button>
-          </div>
-        </form>
+        <div style="display: none;">
+          <h3>Добавить новое мероприятие</h3>
+          <form id="bulkForm" method="post" action="/group/{{ group[0] }}/events/create-multiple{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">
+            <div id="rows"></div>
+            <div style="margin-top:8px; display:flex; gap:8px;">
+              <button class="btn" type="button" id="addRow">＋ Добавить строку</button>
+              <button class="btn" type="submit">Создать</button>
+            </div>
+          </form>
+        </div>
         <script>
           (function(){
             const rows = document.getElementById('rows');
@@ -665,6 +677,28 @@
       </div>
     </div>
 
+    <!-- Create Event Modal -->
+    <div id="createEventModal" class="modal" style="display: none;">
+      <div class="modal-content" style="max-width: 600px;">
+        <div class="modal-header">
+          <h3>Создать мероприятия</h3>
+          <button class="close-btn" onclick="closeCreateEventModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+          <form id="createEventForm" method="post" action="/group/{{ group[0] }}/events/create-multiple{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">
+            <div id="createEventRows"></div>
+            <div style="margin-top: 16px; display: flex; gap: 8px; justify-content: center;">
+              <button class="btn" type="button" id="addCreateRow" style="background: #3b82f6;">➕ Добавить строку</button>
+            </div>
+          </form>
+        </div>
+        <div class="modal-footer">
+          <button class="btn" onclick="submitCreateEventForm()" style="background: #16a34a;">Создать мероприятия</button>
+          <button class="btn" onclick="closeCreateEventModal()" style="background: #6b7280;">Отмена</button>
+        </div>
+      </div>
+    </div>
+
     <script>
       // Add tg_id, tab, and pagination parameters to all forms automatically
       function addTgIdToForms() {
@@ -824,6 +858,80 @@
         window.location.href = url.toString();
       }
 
+      // Create Event Modal Functions
+      function openCreateEventModal() {
+        document.getElementById('createEventModal').style.display = 'block';
+        // Initialize with one row
+        addCreateEventRow();
+      }
+
+      function closeCreateEventModal() {
+        document.getElementById('createEventModal').style.display = 'none';
+        // Clear the form
+        document.getElementById('createEventRows').innerHTML = '';
+      }
+
+      function addCreateEventRow() {
+        const rows = document.getElementById('createEventRows');
+        const rowIndex = rows.children.length;
+        
+        const row = document.createElement('div');
+        row.className = 'item';
+        row.style.cssText = 'display: flex; gap: 8px; align-items: center; margin-bottom: 8px; padding: 8px; border: 1px solid var(--border); border-radius: 6px;';
+        
+        row.innerHTML = `
+          <input type="text" name="name" placeholder="Название мероприятия" style="flex: 1; padding: 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text);">
+          <input type="datetime-local" name="time" style="padding: 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text);">
+          <button type="button" class="del-row" style="background: var(--danger); color: white; border: none; border-radius: 4px; padding: 8px 12px; cursor: pointer;">✕</button>
+        `;
+        
+        rows.appendChild(row);
+        
+        // Add delete functionality
+        const deleteBtn = row.querySelector('.del-row');
+        deleteBtn.addEventListener('click', function() {
+          row.remove();
+          updateCreateEventDeleteButtons();
+        });
+        
+        updateCreateEventDeleteButtons();
+      }
+
+      function updateCreateEventDeleteButtons() {
+        const rows = document.getElementById('createEventRows');
+        const deleteButtons = rows.querySelectorAll('.del-row');
+        
+        // Show delete button only if there's more than one row
+        deleteButtons.forEach(btn => {
+          btn.style.display = rows.children.length > 1 ? 'block' : 'none';
+        });
+      }
+
+      function submitCreateEventForm() {
+        const form = document.getElementById('createEventForm');
+        const rows = document.getElementById('createEventRows');
+        
+        // Check if there are any rows with data
+        let hasData = false;
+        const nameInputs = rows.querySelectorAll('input[name="name"]');
+        const timeInputs = rows.querySelectorAll('input[name="time"]');
+        
+        for (let i = 0; i < nameInputs.length; i++) {
+          if (nameInputs[i].value.trim() || timeInputs[i].value.trim()) {
+            hasData = true;
+            break;
+          }
+        }
+        
+        if (!hasData) {
+          alert('Добавьте хотя бы одно мероприятие');
+          return;
+        }
+        
+        // Submit the form
+        form.submit();
+      }
+
       function openGroupMessageModal() {
         document.getElementById('groupMessageText').value = '';
         document.getElementById('groupMessageModal').style.display = 'block';
@@ -864,11 +972,24 @@
         });
       }
 
+      // Initialize create event modal button
+      document.addEventListener('DOMContentLoaded', function() {
+        const addCreateRowBtn = document.getElementById('addCreateRow');
+        if (addCreateRowBtn) {
+          addCreateRowBtn.addEventListener('click', addCreateEventRow);
+        }
+      });
+
       // Close modal when clicking outside
       window.onclick = function(event) {
         const groupModal = document.getElementById('groupMessageModal');
+        const createModal = document.getElementById('createEventModal');
+        
         if (event.target === groupModal) {
           closeGroupMessageModal();
+        }
+        if (event.target === createModal) {
+          closeCreateEventModal();
         }
       }
     </script>
