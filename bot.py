@@ -464,7 +464,7 @@ async def start(message: types.Message):
         lines.append("У вас пока нет групп. Добавьте бота в группу или дождитесь подтверждения доступа.")
     else:
         lines.append("Ваши группы:")
-        for gid, title, role in groups:
+        for gid, title, role, chat_id in groups:
             role_ru = ROLE_RU.get(role, role)
             kb.button(text=f"{title} (роль: {role_ru})", callback_data=f"grp_menu:{gid}")
         kb.adjust(1)
