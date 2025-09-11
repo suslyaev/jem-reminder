@@ -366,7 +366,40 @@
         if (ok) {
           const map = { name_saved: 'Имя сохранено', member_name_saved: 'Имя участника сохранено', member_made_admin: 'Участник добавлен в ожидающие админы', notification_added: 'Групповое оповещение добавлено', personal_notification_added: 'Личное оповещение добавлено', personal_notification_deleted: 'Личное оповещение удалено', parse_error: 'Ошибка парсинга. Используйте формат: за 1 день, за 2 часа и т.д.', method_error: 'Ошибка: форма отправлена неправильным методом' };
           if (map[ok]) {
-            alert(map[ok]);
+            // Create toast notification
+            const toast = document.createElement('div');
+            toast.id = 'toast';
+            toast.textContent = map[ok];
+            toast.style.cssText = `
+              position: fixed;
+              top: 20px;
+              right: 20px;
+              padding: 12px 20px;
+              border-radius: 6px;
+              color: white;
+              font-weight: 500;
+              z-index: 1000;
+              max-width: 300px;
+              word-wrap: break-word;
+              box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            `;
+            
+            // Set color based on message type
+            if (ok.includes('deleted') || ok.includes('error') || ok.includes('not_found') || ok.includes('in_past')) {
+              toast.style.background = '#ef4444'; // Red for errors and deletions
+            } else {
+              toast.style.background = '#16a34a'; // Green for success
+            }
+            
+            document.body.appendChild(toast);
+            
+            // Auto-hide toast after 3 seconds
+            setTimeout(() => {
+              if (toast && toast.parentNode) {
+                toast.parentNode.removeChild(toast);
+              }
+            }, 3000);
+            
             url.searchParams.delete('ok');
             window.history.replaceState({}, '', url.toString());
           }

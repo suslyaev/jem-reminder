@@ -162,7 +162,40 @@
             group_deleted: 'Группа успешно удалена' 
           };
           if (map[ok]) {
-            alert(map[ok]);
+            // Create toast notification
+            const toast = document.createElement('div');
+            toast.id = 'toast';
+            toast.textContent = map[ok];
+            toast.style.cssText = `
+              position: fixed;
+              top: 20px;
+              right: 20px;
+              padding: 12px 20px;
+              border-radius: 6px;
+              color: white;
+              font-weight: 500;
+              z-index: 1000;
+              max-width: 300px;
+              word-wrap: break-word;
+              box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            `;
+            
+            // Set color based on message type
+            if (ok.includes('deleted') || ok.includes('error') || ok.includes('not_found') || ok.includes('in_past')) {
+              toast.style.background = '#ef4444'; // Red for errors and deletions
+            } else {
+              toast.style.background = '#16a34a'; // Green for success
+            }
+            
+            document.body.appendChild(toast);
+            
+            // Auto-hide toast after 3 seconds
+            setTimeout(() => {
+              if (toast && toast.parentNode) {
+                toast.parentNode.removeChild(toast);
+              }
+            }, 3000);
+            
             url.searchParams.delete('ok');
             window.history.replaceState({}, '', url.toString());
           }

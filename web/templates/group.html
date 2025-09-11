@@ -373,6 +373,14 @@
           const toast = document.getElementById('toast');
           const map = { created: 'Мероприятие создано', updated: 'Сохранено', event_updated: 'Настройки мероприятия изменены', booked: 'Бронь оформлена', unbooked: 'Бронь снята', name_saved: 'Имя сохранено', noop: 'Нет данных для создания', event_deleted: 'Мероприятие удалено', event_booked: 'Мероприятие забронировано', booking_error: 'Ошибка бронирования' };
           toast.textContent = map[ok] || 'Готово';
+          
+          // Set color based on message type
+          if (ok.includes('deleted') || ok.includes('error') || ok.includes('not_found') || ok.includes('in_past')) {
+            toast.style.background = '#ef4444'; // Red for errors and deletions
+          } else {
+            toast.style.background = '#16a34a'; // Green for success
+          }
+          
           toast.style.display = 'block';
           url.searchParams.delete('ok');
           window.history.replaceState({}, '', url.toString());
