@@ -43,11 +43,6 @@
       <a class="link" href="/group/{{ group[0] }}{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">← К группе</a>
       <h2>Настройки группы</h2>
 
-      {% if request.query_params.get('ok') == 'notification_deleted' %}
-        <div class="toast" style="position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 1000; padding: 12px 20px; border-radius: 8px; font-weight: 500; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3); background: #ef4444; color: #fff; display: block;">Групповое уведомление удалено</div>
-      {% elif request.query_params.get('ok') == 'personal_notification_deleted' %}
-        <div class="toast" style="position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 1000; padding: 12px 20px; border-radius: 8px; font-weight: 500; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3); background: #ef4444; color: #fff; display: block;">Личное уведомление удалено</div>
-      {% endif %}
 
       {% if role in ['admin', 'owner', 'superadmin'] %}
         {% if pending %}
@@ -164,6 +159,7 @@
                 {% endif %}
                 
                 <form method="post" action="/group/{{ group[0] }}/settings/notifications/{{ nid }}/delete{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="position: absolute; top: 8px; right: 8px;">
+                  <input type="hidden" name="tab" value="group">
                   <button type="submit" style="background: #ef4444; color: white; border: none; border-radius: 4px; padding: 4px 8px; cursor: pointer; font-size: 12px;">✕</button>
                 </form>
               </li>
@@ -173,6 +169,7 @@
 
           <h4>Добавить групповое оповещение</h4>
           <form method="post" action="/group/{{ group[0] }}/settings/notifications/add-text{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">
+            <input type="hidden" name="tab" value="group">
             <input type="text" name="notification_text" placeholder="Например: за 1 день, за 2 часа, за 30 минут напомнить о встрече" required style="width:335px; margin-bottom:6px;" />
             <input type="text" name="message_text" placeholder="Сообщение (необязательно)" style="width:335px; margin-bottom:6px;" />
             <button class="btn" type="submit">Добавить</button>
@@ -213,6 +210,7 @@
                 {% endif %}
                 
                 <form method="post" action="/group/{{ group[0] }}/settings/personal-notifications/{{ nid }}/delete{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="position: absolute; top: 8px; right: 8px;">
+                  <input type="hidden" name="tab" value="personal">
                   <button type="submit" style="background: #ef4444; color: white; border: none; border-radius: 4px; padding: 4px 8px; cursor: pointer; font-size: 12px;">✕</button>
                 </form>
               </li>
@@ -222,6 +220,7 @@
 
         <h4>Добавить личное оповещение</h4>
         <form method="post" action="/group/{{ group[0] }}/settings/personal-notifications/add-text{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">
+          <input type="hidden" name="tab" value="personal">
           <input type="text" name="notification_text" placeholder="Например: за 1 день, за 2 часа, за 30 минут напомнить о встрече" required style="width:335px; margin-bottom:6px;" />
           <input type="text" name="message_text" placeholder="Сообщение (необязательно)" style="width:335px; margin-bottom:6px;" />
           <button class="btn" type="submit">Добавить</button>
@@ -380,8 +379,15 @@
         
         const url = new URL(window.location.href);
         const ok = url.searchParams.get('ok');
+        const tab = url.searchParams.get('tab');
+        
+        // Switch to specified tab if provided
+        if (tab && (tab === 'group' || tab === 'personal')) {
+          switchTab(tab);
+        }
+        
         if (ok) {
-          const map = { name_saved: 'Имя сохранено', member_name_saved: 'Имя участника сохранено', member_made_admin: 'Участник добавлен в ожидающие админы', notification_added: 'Групповое оповещение добавлено', personal_notification_added: 'Личное оповещение добавлено', personal_notification_deleted: 'Личное оповещение удалено', parse_error: 'Ошибка парсинга. Используйте формат: за 1 день, за 2 часа и т.д.', method_error: 'Ошибка: форма отправлена неправильным методом' };
+          const map = { name_saved: 'Имя сохранено', member_name_saved: 'Имя участника сохранено', member_made_admin: 'Участник добавлен в ожидающие админы', notification_added: 'Групповое оповещение добавлено', notification_deleted: 'Групповое оповещение удалено', personal_notification_added: 'Личное оповещение добавлено', personal_notification_deleted: 'Личное оповещение удалено', parse_error: 'Ошибка парсинга. Используйте формат: за 1 день, за 2 часа и т.д.', method_error: 'Ошибка: форма отправлена неправильным методом' };
           if (map[ok]) {
             // Create toast notification
             const toast = document.createElement('div');
@@ -390,7 +396,8 @@
             toast.style.cssText = `
               position: fixed;
               top: 20px;
-              right: 20px;
+              left: 50%;
+              transform: translateX(-50%);
               padding: 12px 20px;
               border-radius: 6px;
               color: white;

@@ -602,6 +602,7 @@ async def group_settings(request: Request, gid: int):
 
 @app.post('/group/{gid}/settings/notifications/add')
 async def add_group_notification(request: Request, gid: int, time_before: int, time_unit: str, message_text: str | None = None):
+    tg_id = request.query_params.get('tg_id')
     urow = _require_user(request)
     user_id = urow[0]
     _require_admin(user_id, gid)
@@ -610,11 +611,13 @@ async def add_group_notification(request: Request, gid: int, time_before: int, t
 
 @app.get('/group/{gid}/settings/notifications/add-text')
 async def add_group_notification_text_get(request: Request, gid: int):
+    tg_id = request.query_params.get('tg_id')
     print(f"GET add_group_notification_text: gid={gid}, tg_id={tg_id}")
     return RedirectResponse(f"/group/{gid}/settings?ok=method_error", status_code=303)
 
 @app.post('/group/{gid}/settings/notifications/add-text')
-async def add_group_notification_text(request: Request, gid: int, notification_text: str = Form(...), message_text: str = Form("")):
+async def add_group_notification_text(request: Request, gid: int, notification_text: str = Form(...), message_text: str = Form(""), tab: str | None = Form(None)):
+    tg_id = request.query_params.get('tg_id')
     urow = _require_user(request)
     user_id = urow[0]
     _require_admin(user_id, gid)
@@ -653,10 +656,12 @@ async def add_group_notification_text(request: Request, gid: int, notification_t
         final_message_text = cleaned if cleaned else None
     
     NotificationRepo.add_notification(gid, time_before, time_unit, final_message_text)
-    return RedirectResponse(f"/group/{gid}/settings?ok=notification_added", status_code=303)
+    tab_param = f"&tab={tab}" if tab else "&tab=group"
+    return RedirectResponse(f"/group/{gid}/settings?ok=notification_added&tg_id={tg_id}{tab_param}", status_code=303)
 
 @app.post('/group/{gid}/settings/personal-notifications/add-text')
-async def add_personal_notification_text(request: Request, gid: int, notification_text: str = Form(...), message_text: str = Form("")):
+async def add_personal_notification_text(request: Request, gid: int, notification_text: str = Form(...), message_text: str = Form(""), tab: str | None = Form(None)):
+    tg_id = request.query_params.get('tg_id')
     urow = _require_user(request)
     user_id = urow[0]
     
@@ -695,14 +700,17 @@ async def add_personal_notification_text(request: Request, gid: int, notificatio
     
     # Add personal notification template
     NotificationRepo.add_notification(gid, time_before, time_unit, final_message_text, notification_type='personal')
-    return RedirectResponse(f"/group/{gid}/settings?ok=personal_notification_added", status_code=303)
+    tab_param = f"&tab={tab}" if tab else "&tab=personal"
+    return RedirectResponse(f"/group/{gid}/settings?ok=personal_notification_added&tg_id={tg_id}{tab_param}", status_code=303)
 
 @app.post('/group/{gid}/settings/personal-notifications/{nid}/delete')
-async def delete_personal_notification(request: Request, gid: int, nid: int):
+async def delete_personal_notification(request: Request, gid: int, nid: int, tab: str | None = Form(None)):
+    tg_id = request.query_params.get('tg_id')
     urow = _require_user(request)
     user_id = urow[0]
     NotificationRepo.delete_notification(nid)
-    return RedirectResponse(f"/group/{gid}/settings?ok=personal_notification_deleted", status_code=303)
+    tab_param = f"&tab={tab}" if tab else "&tab=personal"
+    return RedirectResponse(f"/group/{gid}/settings?ok=personal_notification_deleted&tg_id={tg_id}{tab_param}", status_code=303)
 
 @app.post('/group/{gid}/send-message')
 async def send_message_to_user(request: Request, gid: int, recipient_id: int = Form(...), message: str = Form(...)):
@@ -759,12 +767,14 @@ async def send_message_to_group(request: Request, gid: int, message: str = Form(
 
 
 @app.post('/group/{gid}/settings/notifications/{nid}/delete')
-async def delete_group_notification(request: Request, gid: int, nid: int):
+async def delete_group_notification(request: Request, gid: int, nid: int, tab: str | None = Form(None)):
+    tg_id = request.query_params.get('tg_id')
     urow = _require_user(request)
     user_id = urow[0]
     _require_admin(user_id, gid)
     NotificationRepo.delete_notification(nid)
-    return RedirectResponse(url=f"/group/{gid}/settings?ok=notification_deleted&tg_id={tg_id}", status_code=303)
+    tab_param = f"&tab={tab}" if tab else ""
+    return RedirectResponse(url=f"/group/{gid}/settings?ok=notification_deleted&tg_id={tg_id}{tab_param}", status_code=303)
 
 
 @app.get('/group/{gid}/events/{eid}/settings', response_class=HTMLResponse)
@@ -815,6 +825,7 @@ async def event_settings(request: Request, gid: int, eid: int):
 
 @app.post('/group/{gid}/events/{eid}/notifications/add')
 async def add_event_notification(request: Request, gid: int, eid: int, time_before: int, time_unit: str, message_text: str | None = None):
+    tg_id = request.query_params.get('tg_id')
     urow = _require_user(request)
     user_id = urow[0]
     _require_admin(user_id, gid)
@@ -823,6 +834,7 @@ async def add_event_notification(request: Request, gid: int, eid: int, time_befo
 
 @app.post('/group/{gid}/events/{eid}/notifications/add-text')
 async def add_event_notification_text(request: Request, gid: int, eid: int, notification_text: str = Form(...), message_text: str = Form("")):
+    tg_id = request.query_params.get('tg_id')
     print(f"add_event_notification_text called: gid={gid}, eid={eid}, tg_id={tg_id}")
     print(f"notification_text='{notification_text}', message_text='{message_text}'")
     urow = _require_user(request)
@@ -875,11 +887,13 @@ async def add_event_notification_text(request: Request, gid: int, eid: int, noti
 
 @app.get('/group/{gid}/events/{eid}/notifications/add-absolute')
 async def add_event_notification_absolute_get(request: Request, gid: int, eid: int):
+    tg_id = request.query_params.get('tg_id')
     print(f"GET add_event_notification_absolute: gid={gid}, eid={eid}, tg_id={tg_id}")
     return RedirectResponse(f"/group/{gid}/events/{eid}/settings?ok=method_error", status_code=303)
 
 @app.post('/group/{gid}/events/{eid}/notifications/add-absolute')
 async def add_event_notification_absolute(request: Request, gid: int, eid: int, date: str = Form(...), time: str = Form(...), message_text: str = Form(None)):
+    tg_id = request.query_params.get('tg_id')
     print(f"POST add_event_notification_absolute: gid={gid}, eid={eid}, tg_id={tg_id}, date={date}, time={time}, message_text={message_text}")
     """Add event notification by exact datetime. Stored as delta in minutes."""
     urow = _require_user(request)
@@ -912,6 +926,7 @@ async def add_event_notification_absolute(request: Request, gid: int, eid: int, 
 
 @app.post('/group/{gid}/events/{eid}/notifications/{nid}/delete')
 async def delete_event_notification(request: Request, gid: int, eid: int, nid: int):
+    tg_id = request.query_params.get('tg_id')
     urow = _require_user(request)
     user_id = urow[0]
     _require_admin(user_id, gid)
@@ -920,6 +935,7 @@ async def delete_event_notification(request: Request, gid: int, eid: int, nid: i
 
 @app.post('/group/{gid}/events/{eid}/personal-notifications/add-text')
 async def add_personal_event_notification_text(request: Request, gid: int, eid: int, notification_text: str = Form(...), message_text: str = Form("")):
+    tg_id = request.query_params.get('tg_id')
     print(f"add_personal_event_notification_text called: gid={gid}, eid={eid}, tg_id={tg_id}")
     print(f"notification_text='{notification_text}', message_text='{message_text}'")
     urow = _require_user(request)
@@ -1176,6 +1192,7 @@ async def make_member_admin(request: Request, gid: int, uid: int):
 @app.post('/group/{gid}/delete')
 async def delete_group(request: Request, gid: int):
     """Delete group and all associated data"""
+    tg_id = request.query_params.get('tg_id')
     print(f"DELETE GROUP: gid={gid}, tg_id={tg_id}")
     urow = _require_user(request)
     user_id = urow[0]
