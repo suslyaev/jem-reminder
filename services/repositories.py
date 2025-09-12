@@ -799,7 +799,14 @@ class PersonalEventNotificationRepo:
     def add_notification(user_id: int, event_id: int, time_before: int, time_unit: str, message_text: Optional[str] = None) -> int:
         with get_conn() as conn:
             cur = conn.cursor()
-            cur.execute("INSERT OR IGNORE INTO personal_event_notifications (user_id, event_id, time_before, time_unit, message_text) VALUES (?,?,?,?,?)",
+            # Check if notification already exists (same logic as EventNotificationRepo)
+            cur.execute("SELECT id FROM personal_event_notifications WHERE user_id = ? AND event_id = ? AND time_before = ? AND time_unit = ? AND (message_text = ? OR (message_text IS NULL AND ? IS NULL))",
+                        (user_id, event_id, time_before, time_unit, message_text, message_text))
+            existing = cur.fetchone()
+            if existing:
+                return existing[0]  # Return existing ID instead of creating duplicate
+            
+            cur.execute("INSERT INTO personal_event_notifications (user_id, event_id, time_before, time_unit, message_text) VALUES (?,?,?,?,?)",
                         (user_id, event_id, time_before, time_unit, message_text))
             conn.commit()
             return cur.lastrowid
@@ -918,6 +925,66 @@ class DispatchLogRepo:
                 (kind, user_id, group_id, event_id, time_before, time_unit)
             )
             return cur.fetchone() is not None
+
+    @staticmethod
+    def get_sent_status_for_event_notifications(event_id: int) -> dict[tuple[int, str], bool]:
+        """Get sent status for all event notifications of an event. Returns dict with (time_before, time_unit) as key."""
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT time_before, time_unit FROM notification_dispatch_log
+                WHERE kind = 'event' AND event_id = ?
+                """,
+                (event_id,)
+            )
+            sent_notifications = {(time_before, time_unit) for time_before, time_unit in cur.fetchall()}
+            
+            # Get all event notifications for this event
+            cur.execute(
+                """
+                SELECT time_before, time_unit FROM event_notifications
+                WHERE event_id = ?
+                """,
+                (event_id,)
+            )
+            all_notifications = cur.fetchall()
+            
+            result = {}
+            for time_before, time_unit in all_notifications:
+                result[(time_before, time_unit)] = (time_before, time_unit) in sent_notifications
+            
+            return result
+
+    @staticmethod
+    def get_sent_status_for_personal_notifications(event_id: int, user_id: int) -> dict[tuple[int, str], bool]:
+        """Get sent status for all personal notifications of a user for an event. Returns dict with (time_before, time_unit) as key."""
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT time_before, time_unit FROM notification_dispatch_log
+                WHERE kind = 'personal' AND event_id = ? AND user_id = ?
+                """,
+                (event_id, user_id)
+            )
+            sent_notifications = {(time_before, time_unit) for time_before, time_unit in cur.fetchall()}
+            
+            # Get all personal notifications for this user and event
+            cur.execute(
+                """
+                SELECT time_before, time_unit FROM personal_event_notifications
+                WHERE event_id = ? AND user_id = ?
+                """,
+                (event_id, user_id)
+            )
+            all_notifications = cur.fetchall()
+            
+            result = {}
+            for time_before, time_unit in all_notifications:
+                result[(time_before, time_unit)] = (time_before, time_unit) in sent_notifications
+            
+            return result
 
 
 class BookingRepo:

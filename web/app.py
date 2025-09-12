@@ -13,7 +13,7 @@ import hashlib
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from services.repositories import UserRepo, GroupRepo, EventRepo, RoleRepo, PersonalEventNotificationRepo, NotificationRepo, BookingRepo, DisplayNameRepo, EventNotificationRepo
+from services.repositories import UserRepo, GroupRepo, EventRepo, RoleRepo, PersonalEventNotificationRepo, NotificationRepo, BookingRepo, DisplayNameRepo, EventNotificationRepo, DispatchLogRepo
 
 # Import test configuration from .env
 import os
@@ -124,8 +124,18 @@ def _role_label(role: str | None) -> str:
 def _normalize_dt_local(val: str | None) -> str | None:
     if not val:
         return None
+    
+    # Handle datetime-local input format (YYYY-MM-DDTHH:MM)
     if 'T' in val:
-        val = val.replace('T', ' ')
+        # Try to parse as datetime-local format first
+        try:
+            dt = datetime.fromisoformat(val)
+            return dt.strftime("%Y-%m-%d %H:%M")
+        except ValueError:
+            # Fallback to old method
+            val = val.replace('T', ' ')
+    
+    # Try different formats
     for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S"):
         try:
             dt = datetime.strptime(val, fmt)
@@ -804,6 +814,10 @@ async def event_settings(request: Request, gid: int, eid: int):
     event_notifications = EventNotificationRepo.list_by_event(eid)
     personal_notifications = PersonalEventNotificationRepo.list_by_user_and_event(user_id, eid)
     
+    # Get sent status for notifications
+    event_notifications_sent = DispatchLogRepo.get_sent_status_for_event_notifications(eid)
+    personal_notifications_sent = DispatchLogRepo.get_sent_status_for_personal_notifications(eid, user_id)
+    
     # Create member options with display names (same as in group.html)
     member_name_map: dict[int, str] = {}
     for mid, uname in member_rows:
@@ -835,7 +849,7 @@ async def event_settings(request: Request, gid: int, eid: int):
     current_user_telegram_id = urow[1]  # urow[1] is telegram_id
     current_user_display_name = member_name_map.get(user_id, f"@{urow[2]}" if urow[2] else str(current_user_telegram_id))
     
-    return render('event_settings.html', group=group, event=event, members=member_options, event_notifications=event_notifications, personal_notifications=personal_notifications, role=role, responsible_name=responsible_name, event_time_display=event_time_display, current_user_telegram_id=current_user_telegram_id, current_user_display_name=current_user_display_name, _calculate_notification_time=_calculate_notification_time, request=request)
+    return render('event_settings.html', group=group, event=event, members=member_options, event_notifications=event_notifications, personal_notifications=personal_notifications, event_notifications_sent=event_notifications_sent, personal_notifications_sent=personal_notifications_sent, role=role, responsible_name=responsible_name, event_time_display=event_time_display, current_user_telegram_id=current_user_telegram_id, current_user_display_name=current_user_display_name, _calculate_notification_time=_calculate_notification_time, request=request)
 
 
 @app.post('/group/{gid}/events/{eid}/notifications/add')
@@ -907,9 +921,9 @@ async def add_event_notification_absolute_get(request: Request, gid: int, eid: i
     return RedirectResponse(f"/group/{gid}/events/{eid}/settings?ok=method_error", status_code=303)
 
 @app.post('/group/{gid}/events/{eid}/notifications/add-absolute')
-async def add_event_notification_absolute(request: Request, gid: int, eid: int, date: str = Form(...), time: str = Form(...), message_text: str = Form(None)):
+async def add_event_notification_absolute(request: Request, gid: int, eid: int, datetime_str: str = Form(...), message_text: str = Form(None)):
     tg_id = request.query_params.get('tg_id')
-    print(f"POST add_event_notification_absolute: gid={gid}, eid={eid}, tg_id={tg_id}, date={date}, time={time}, message_text={message_text}")
+    print(f"POST add_event_notification_absolute: gid={gid}, eid={eid}, tg_id={tg_id}, datetime={datetime_str}, message_text={message_text}")
     """Add event notification by exact datetime. Stored as delta in minutes."""
     urow = _require_user(request)
     user_id = urow[0]
@@ -918,14 +932,12 @@ async def add_event_notification_absolute(request: Request, gid: int, eid: int, 
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
     
-    # Combine date and time
-    at = f"{date}T{time}"
-    
     event_time = datetime.strptime(event[2], "%Y-%m-%d %H:%M")
-    at_norm = _normalize_dt_local(at)
+    at_norm = _normalize_dt_local(datetime_str)
     try:
         at_dt = datetime.strptime(at_norm, "%Y-%m-%d %H:%M") if at_norm else None
-    except Exception:
+    except Exception as e:
+        print(f"Error parsing datetime: {e}, at_norm: {at_norm}")
         at_dt = None
     if not at_dt:
         raise HTTPException(status_code=400, detail="Invalid datetime")
@@ -936,7 +948,7 @@ async def add_event_notification_absolute(request: Request, gid: int, eid: int, 
     # Store in minutes by default
     minutes = max(delta_seconds // 60, 1)
     EventNotificationRepo.add_notification(eid, minutes, 'minutes', message_text)
-    return RedirectResponse(url=f"/group/{gid}/events/{eid}/settings?tg_id={tg_id}", status_code=303)
+    return RedirectResponse(url=f"/group/{gid}/events/{eid}/settings?ok=notification_added&tg_id={tg_id}", status_code=303)
 
 
 @app.post('/group/{gid}/events/{eid}/notifications/{nid}/delete')
@@ -1003,26 +1015,31 @@ async def add_personal_event_notification_text(request: Request, gid: int, eid: 
     if _is_notification_in_past(event[2], time_before, time_unit):
         return RedirectResponse(f"/group/{gid}/events/{eid}/settings?ok=notification_in_past", status_code=303)
     
+    # Add notification (repository handles duplicate checking internally)
     PersonalEventNotificationRepo.add_notification(user_id, eid, time_before, time_unit, message_text_tail)
-    return RedirectResponse(f"/group/{gid}/events/{eid}/settings?ok=personal_notification_added", status_code=303)
+    return RedirectResponse(f"/group/{gid}/events/{eid}/settings?ok=personal_notification_added&tab=personal&tg_id={tg_id}", status_code=303)
 
 @app.post('/group/{gid}/events/{eid}/personal-notifications/add-absolute')
-async def add_personal_event_notification_absolute(request: Request, gid: int, eid: int, date: str = Form(...), time: str = Form(...), message_text: str = Form(None)):
+async def add_personal_event_notification_absolute(request: Request, gid: int, eid: int, datetime_str: str = Form(...), message_text: str = Form(None)):
     """Add personal event notification by exact datetime. Stored as delta in minutes."""
+    tg_id = request.query_params.get('tg_id')
     urow = _require_user(request)
     user_id = urow[0]
     
-    # Combine date and time
-    at = f"{date}T{time}"
-    
     # Convert datetime to minutes before event
-    from datetime import datetime
     event = EventRepo.get_by_id(eid)
     if not event:
         return RedirectResponse(f"/group/{gid}/events/{eid}/settings?ok=error", status_code=303)
     
-    event_time = datetime.fromisoformat(event[2].replace('Z', '+00:00'))
-    notification_time = datetime.fromisoformat(at)
+    event_time = datetime.strptime(event[2], "%Y-%m-%d %H:%M")
+    at_norm = _normalize_dt_local(datetime_str)
+    try:
+        notification_time = datetime.strptime(at_norm, "%Y-%m-%d %H:%M") if at_norm else None
+    except Exception as e:
+        print(f"Error parsing datetime: {e}, at_norm: {at_norm}")
+        notification_time = None
+    if not notification_time:
+        return RedirectResponse(f"/group/{gid}/events/{eid}/settings?ok=parse_error", status_code=303)
     
     # Calculate difference in minutes
     delta = event_time - notification_time
@@ -1042,15 +1059,17 @@ async def add_personal_event_notification_absolute(request: Request, gid: int, e
         time_before = minutes_before // 1440
         time_unit = 'days'
     
+    # Add notification (repository handles duplicate checking internally)
     PersonalEventNotificationRepo.add_notification(user_id, eid, time_before, time_unit, message_text)
-    return RedirectResponse(f"/group/{gid}/events/{eid}/settings?ok=personal_notification_added", status_code=303)
+    return RedirectResponse(f"/group/{gid}/events/{eid}/settings?ok=personal_notification_added&tab=personal&tg_id={tg_id}", status_code=303)
 
 @app.post('/group/{gid}/events/{eid}/personal-notifications/{nid}/delete')
 async def delete_personal_event_notification(request: Request, gid: int, eid: int, nid: int):
+    tg_id = request.query_params.get('tg_id')
     urow = _require_user(request)
     user_id = urow[0]
-    PersonalEventNotificationRepo.delete_personal_notification(user_id, nid)
-    return RedirectResponse(f"/group/{gid}/events/{eid}/settings?ok=personal_notification_deleted", status_code=303)
+    PersonalEventNotificationRepo.delete_notification(nid, user_id)
+    return RedirectResponse(f"/group/{gid}/events/{eid}/settings?ok=personal_notification_deleted&tab=personal&tg_id={tg_id}", status_code=303)
 
 @app.post('/group/{gid}/events/{eid}/delete')
 async def delete_event(request: Request, gid: int, eid: int, tab: str | None = Form(None), page: int | None = Form(None), per_page: int | None = Form(None)):

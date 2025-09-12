@@ -70,19 +70,20 @@
       <h3>Оповещения</h3>
       <div class="tabs">
         {% if role in ['admin', 'owner', 'superadmin'] %}
-          <button class="tab-btn active" onclick="switchTab('group')" id="group-tab">Групповые</button>
+          <button class="tab-btn {% if request.query_params.get('tab') != 'personal' %}active{% endif %}" onclick="switchTab('group')" id="group-tab">Групповые</button>
         {% endif %}
-        <button class="tab-btn {% if role not in ['admin', 'owner', 'superadmin'] %}active{% endif %}" onclick="switchTab('personal')" id="personal-tab">Личные</button>
+        <button class="tab-btn {% if request.query_params.get('tab') == 'personal' or role not in ['admin', 'owner', 'superadmin'] %}active{% endif %}" onclick="switchTab('personal')" id="personal-tab">Личные</button>
       </div>
 
-      <div id="group-notifications" class="tab-content {% if role not in ['admin', 'owner', 'superadmin'] %}hidden{% endif %}">
+      <div id="group-notifications" class="tab-content {% if request.query_params.get('tab') == 'personal' or role not in ['admin', 'owner', 'superadmin'] %}hidden{% endif %}">
         {% if role in ['admin', 'owner', 'superadmin'] %}
           {% if not event_notifications %}
             <div class="empty">Пока нет групповых оповещений</div>
           {% else %}
             <ul class="list">
               {% for nid, time_before, time_unit, message_text in event_notifications %}
-                <li class="item">
+                {% set is_sent = event_notifications_sent.get((time_before, time_unit), False) %}
+                <li class="item {% if is_sent %}notification-sent{% endif %}">
                   <div class="title">
                     {% set unit_map = {
                       'days': ['день', 'дня', 'дней'],
@@ -99,6 +100,7 @@
                     {% else %}
                       {{ time_before }} {{ forms[2] }}
                     {% endif %}
+                    {% if is_sent %} ✓{% endif %}
                   </div>
                   <div class="subtitle" style="font-size: 0.8em; color: #9ca3af; margin-top: 4px;">
                     Когда: {{ _calculate_notification_time(event[2], time_before, time_unit) }}
@@ -109,9 +111,11 @@
                   <div class="subtitle" style="font-size: 0.8em; color: #9ca3af; margin-top: 2px;">
                     Текст: {{ message_text if message_text else '—' }}
                   </div>
-                  <form method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/notifications/{{ nid }}/delete{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="position: absolute; top: 8px; right: 8px;">
-                    <button type="submit" class="delete-btn">✕</button>
-                  </form>
+                  {% if not is_sent %}
+                    <form method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/notifications/{{ nid }}/delete{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="position: absolute; top: 8px; right: 8px;" class="delete-btn">
+                      <button type="submit" class="delete-btn">✕</button>
+                    </form>
+                  {% endif %}
                 </li>
               {% endfor %}
             </ul>
@@ -127,19 +131,15 @@
             <form id="group-text-form" method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/notifications/add-text{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" enctype="application/x-www-form-urlencoded">
               <input type="text" name="notification_text" placeholder="Например: за 1 день, за 2 часа, за 30 минут напомнить о встрече" required style="width: 100%; margin-bottom: 8px;" />
               <input type="text" name="message_text" placeholder="Сообщение (необязательно)" style="width: 100%; margin-bottom: 8px;" />
-              <div style="display: flex; gap: 8px;">
-                <button class="btn" type="submit" style="flex: 1;">Добавить</button>
-                <button class="btn" type="button" onclick="clearForm('group-text-form')" style="background: #6b7280;">Очистить</button>
-              </div>
+              <button class="btn" type="submit">Добавить</button>
             </form>
           </div>
 
           <div id="exact-add-form" style="display: none;">
             <form method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/notifications/add-absolute{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">
-              <input type="date" name="date" required style="width: 100%; margin-bottom: 8px;" />
-              <input type="time" name="time" required style="width: 100%; margin-bottom: 8px;" />
+              <input type="datetime-local" name="datetime_str" required style="width: 100%; margin-bottom: 8px;" />
               <input type="text" name="message_text" placeholder="Сообщение (необязательно)" style="width: 100%; margin-bottom: 8px;" />
-              <button class="btn" type="submit">Добавить по дате</button>
+              <button class="btn" type="submit">Добавить</button>
             </form>
           </div>
         {% else %}
@@ -147,13 +147,14 @@
         {% endif %}
       </div>
 
-      <div id="personal-notifications" class="tab-content {% if role in ['admin', 'owner', 'superadmin'] %}hidden{% endif %}">
+      <div id="personal-notifications" class="tab-content {% if request.query_params.get('tab') != 'personal' and role in ['admin', 'owner', 'superadmin'] %}hidden{% endif %}">
         {% if not personal_notifications %}
           <div class="empty">Пока нет личных оповещений</div>
         {% else %}
           <ul class="list">
             {% for nid, time_before, time_unit, message_text in personal_notifications %}
-              <li class="item">
+              {% set is_sent = personal_notifications_sent.get((time_before, time_unit), False) %}
+              <li class="item {% if is_sent %}notification-sent{% endif %}">
                 <div class="title">
                   {% set unit_map = {
                     'days': ['день', 'дня', 'дней'],
@@ -170,6 +171,7 @@
                   {% else %}
                     {{ time_before }} {{ forms[2] }}
                   {% endif %}
+                  {% if is_sent %} ✓{% endif %}
                 </div>
                 <div class="subtitle" style="font-size: 0.8em; color: #9ca3af; margin-top: 4px;">
                   Когда: {{ _calculate_notification_time(event[2], time_before, time_unit) }}
@@ -180,9 +182,11 @@
                 <div class="subtitle" style="font-size: 0.8em; color: #9ca3af; margin-top: 2px;">
                   Текст: {{ message_text if message_text else '—' }}
                 </div>
-                <form method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/personal-notifications/{{ nid }}/delete{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="position: absolute; top: 8px; right: 8px;">
-                  <button type="submit" class="delete-btn">✕</button>
-                </form>
+                {% if not is_sent %}
+                  <form method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/personal-notifications/{{ nid }}/delete{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="position: absolute; top: 8px; right: 8px;" class="delete-btn">
+                    <button type="submit" class="delete-btn">✕</button>
+                  </form>
+                {% endif %}
               </li>
             {% endfor %}
           </ul>
@@ -198,25 +202,32 @@
           <form id="personal-text-form" method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/personal-notifications/add-text{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" enctype="application/x-www-form-urlencoded">
             <input type="text" name="notification_text" placeholder="Например: за 1 день, за 2 часа, за 30 минут напомнить о встрече" required style="width: 100%; margin-bottom: 8px;" />
             <input type="text" name="message_text" placeholder="Сообщение (необязательно)" style="width: 100%; margin-bottom: 8px;" />
-            <div style="display: flex; gap: 8px;">
-              <button class="btn" type="submit" style="flex: 1;">Добавить</button>
-              <button class="btn" type="button" onclick="clearForm('personal-text-form')" style="background: #6b7280;">Очистить</button>
-            </div>
+            <button class="btn" type="submit">Добавить</button>
           </form>
         </div>
 
         <div id="personal-exact-add-form" style="display: none;">
           <form method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/personal-notifications/add-absolute{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">
-            <input type="date" name="date" required style="width: 100%; margin-bottom: 8px;" />
-            <input type="time" name="time" required style="width: 100%; margin-bottom: 8px;" />
+            <input type="datetime-local" name="datetime_str" required style="width: 100%; margin-bottom: 8px;" />
             <input type="text" name="message_text" placeholder="Сообщение (необязательно)" style="width: 100%; margin-bottom: 8px;" />
-            <button class="btn" type="submit">Добавить по дате</button>
+            <button class="btn" type="submit">Добавить</button>
           </form>
         </div>
       </div>
     </div>
 
     <script>
+      // Handle tab parameter from URL on page load
+      document.addEventListener('DOMContentLoaded', function() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const tab = urlParams.get('tab');
+        if (tab === 'personal') {
+          switchTab('personal');
+        } else if (tab === 'group') {
+          switchTab('group');
+        }
+      });
+
       // Add tg_id to all forms automatically
       function addTgIdToForms() {
         const tgId = new URLSearchParams(window.location.search).get('tg_id');
@@ -245,6 +256,7 @@
             updated: 'Настройки мероприятия сохранены',
             notification_added: 'Групповое оповещение добавлено', 
             personal_notification_added: 'Личное оповещение добавлено', 
+            personal_notification_updated: 'Личное оповещение обновлено',
             notification_deleted: 'Групповое уведомление удалено',
             personal_notification_deleted: 'Личное оповещение удалено', 
             parse_error: 'Ошибка парсинга. Используйте формат: за 1 день, за 2 часа и т.д.', 

@@ -25,3 +25,50 @@ form { display: block; }
 .instructions li { margin: 8px 0; }
 .message { background: var(--card); padding: 16px; border-radius: 12px; margin: 16px 0; color: var(--muted); }
 
+/* Notification sent status styles */
+.notification-sent {
+  opacity: 0.6;
+  text-decoration: line-through;
+}
+
+.notification-sent .title {
+  text-decoration: line-through;
+}
+
+.notification-sent .subtitle {
+  text-decoration: line-through;
+}
+
+/* Hide delete button for sent notifications */
+.notification-sent .delete-btn {
+  display: none !important;
+}
+
+/* Switch container styles */
+.switch-container {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.switch-btn {
+  padding: 8px 16px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.switch-btn.active {
+  background: var(--btn);
+  color: white;
+  border-color: var(--btn);
+}
+
+.switch-btn:hover:not(.active) {
+  background: var(--muted);
+  opacity: 0.8;
+}
+
