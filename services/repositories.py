@@ -721,6 +721,73 @@ class PersonalEventNotificationRepo:
             conn.commit()
 
     @staticmethod
+    def create_from_group_for_user(event_id: int, group_id: int, user_id: int) -> None:
+        """Create personal notifications for specific user based on group settings, only for future events."""
+        with get_conn() as conn:
+            cur = conn.cursor()
+            
+            # Check if event is in the future
+            cur.execute("SELECT time FROM events WHERE id = ?", (event_id,))
+            event_time = cur.fetchone()
+            if not event_time:
+                return
+            
+            from datetime import datetime
+            import pytz
+            
+            # Parse event time and check if it's in the future
+            try:
+                event_dt = datetime.strptime(event_time[0], '%Y-%m-%d %H:%M:%S')
+                msk = pytz.timezone('Europe/Moscow')
+                event_dt = msk.localize(event_dt)
+                now = datetime.now(msk)
+                
+                if event_dt <= now:
+                    # Event is in the past, don't create notifications
+                    return
+            except:
+                # If parsing fails, skip creating notifications
+                return
+            
+            # Get personal notification settings (type='personal')
+            cur.execute("SELECT time_before, time_unit, message_text FROM notification_settings WHERE group_id = ? AND type = 'personal'", (group_id,))
+            personal_notifications = cur.fetchall()
+            
+            # Create personal notifications for the user
+            for time_before, time_unit, message_text in personal_notifications:
+                # Use INSERT OR IGNORE to avoid duplicates
+                cur.execute("""
+                    INSERT OR IGNORE INTO personal_event_notifications 
+                    (user_id, event_id, time_before, time_unit, message_text) 
+                    VALUES (?,?,?,?,?)
+                """, (user_id, event_id, time_before, time_unit, message_text))
+            conn.commit()
+
+    @staticmethod
+    def update_user_for_event(event_id: int, old_user_id: int | None, new_user_id: int | None, group_id: int) -> None:
+        """Update personal notifications when responsible user changes."""
+        with get_conn() as conn:
+            cur = conn.cursor()
+            
+            # Delete old notifications if old user existed
+            if old_user_id:
+                cur.execute("DELETE FROM personal_event_notifications WHERE event_id = ? AND user_id = ?", (event_id, old_user_id))
+            
+            # Create new notifications if new user exists
+            if new_user_id:
+                PersonalEventNotificationRepo.create_from_group_for_user(event_id, group_id, new_user_id)
+            
+            conn.commit()
+
+    @staticmethod
+    def delete_for_event(event_id: int) -> None:
+        """Delete all personal notifications for an event."""
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("DELETE FROM personal_event_notifications WHERE event_id = ?", (event_id,))
+            conn.commit()
+
+    @staticmethod
     def list_by_user_and_event(user_id: int, event_id: int) -> List[Tuple]:
         """Return personal notifications for user and event, ordered by time_before."""
         with get_conn() as conn:

@@ -104,6 +104,9 @@
                     Когда: {{ _calculate_notification_time(event[2], time_before, time_unit) }}
                   </div>
                   <div class="subtitle" style="font-size: 0.8em; color: #9ca3af; margin-top: 2px;">
+                    Куда: Группа (ID: {{ group[1] }})
+                  </div>
+                  <div class="subtitle" style="font-size: 0.8em; color: #9ca3af; margin-top: 2px;">
                     Текст: {{ message_text if message_text else '—' }}
                   </div>
                   <form method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/notifications/{{ nid }}/delete{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="position: absolute; top: 8px; right: 8px;">
@@ -170,6 +173,9 @@
                 </div>
                 <div class="subtitle" style="font-size: 0.8em; color: #9ca3af; margin-top: 4px;">
                   Когда: {{ _calculate_notification_time(event[2], time_before, time_unit) }}
+                </div>
+                <div class="subtitle" style="font-size: 0.8em; color: #9ca3af; margin-top: 2px;">
+                  Куда: {{ current_user_display_name }} (ID: {{ current_user_telegram_id }})
                 </div>
                 <div class="subtitle" style="font-size: 0.8em; color: #9ca3af; margin-top: 2px;">
                   Текст: {{ message_text if message_text else '—' }}

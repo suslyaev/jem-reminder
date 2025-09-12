@@ -458,8 +458,7 @@ async def create_event(request: Request, gid: int, name: str = Form(...), time: 
     new_eid = EventRepo.create(gid, name, norm_time or time)
     # Create event notifications from group defaults
     EventNotificationRepo.create_from_group_defaults(new_eid, gid)
-    # Also create personal defaults for all confirmed members
-    PersonalEventNotificationRepo.create_from_group_for_all_users(new_eid, gid)
+    # Personal notifications will be created when responsible person is assigned
     return RedirectResponse(url=f"/group/{gid}?ok=created", status_code=303)
 
 
@@ -483,12 +482,12 @@ async def create_events_multiple(request: Request, gid: int, items: str | None =
             if t and n:
                 eid = EventRepo.create(gid, n, t)
                 EventNotificationRepo.create_from_group_defaults(eid, gid)
-                PersonalEventNotificationRepo.create_from_group_for_all_users(eid, gid)
+                # Personal notifications will be created when responsible person is assigned
                 created_any = True
             elif t:
                 eid = EventRepo.create(gid, f"Событие {t}", t)
                 EventNotificationRepo.create_from_group_defaults(eid, gid)
-                PersonalEventNotificationRepo.create_from_group_for_all_users(eid, gid)
+                # Personal notifications will be created when responsible person is assigned
                 created_any = True
             elif n:
                 continue
@@ -500,13 +499,13 @@ async def create_events_multiple(request: Request, gid: int, items: str | None =
                 time_part, name_part = line.split('|', 1)
                 eid = EventRepo.create(gid, name_part.strip(), _normalize_dt_local(time_part.strip()) or time_part.strip())
                 EventNotificationRepo.create_from_group_defaults(eid, gid)
-                PersonalEventNotificationRepo.create_from_group_for_all_users(eid, gid)
+                # Personal notifications will be created when responsible person is assigned
                 created_any = True
             else:
                 t = _normalize_dt_local(line.strip()) or line.strip()
                 eid = EventRepo.create(gid, f"Событие {t}", t)
                 EventNotificationRepo.create_from_group_defaults(eid, gid)
-                PersonalEventNotificationRepo.create_from_group_for_all_users(eid, gid)
+                # Personal notifications will be created when responsible person is assigned
                 created_any = True
     ok = 'created' if created_any else 'noop'
     return RedirectResponse(url=f"/group/{gid}?ok={ok}", status_code=303)
@@ -522,10 +521,16 @@ async def update_event(request: Request, gid: int, eid: int, name: str | None = 
     if time is not None and time != "":
         EventRepo.update_time(eid, _normalize_dt_local(time) or time)
     if responsible_user_id is not None:
-        EventRepo.set_responsible(eid, responsible_user_id if responsible_user_id != 0 else None)
-        # If assigning a responsible user, ensure their personal notifications are created from group settings
-        if responsible_user_id and responsible_user_id != 0:
-            PersonalEventNotificationRepo.create_from_group_for_user(eid, gid, responsible_user_id)
+        # Get current responsible user before updating
+        event = EventRepo.get_by_id(eid)
+        old_responsible = event[4] if event else None
+        
+        # Update responsible user
+        new_responsible = responsible_user_id if responsible_user_id != 0 else None
+        EventRepo.set_responsible(eid, new_responsible)
+        
+        # Update personal notifications
+        PersonalEventNotificationRepo.update_user_for_event(eid, old_responsible, new_responsible, gid)
     return RedirectResponse(url=f"/group/{gid}/events/{eid}/settings?ok=updated", status_code=303)
 
 
@@ -539,10 +544,16 @@ async def update_event_from_card(request: Request, gid: int, eid: int, name: str
     if time is not None and time != "":
         EventRepo.update_time(eid, _normalize_dt_local(time) or time)
     if responsible_user_id is not None:
-        EventRepo.set_responsible(eid, responsible_user_id if responsible_user_id != 0 else None)
-        # If assigning a responsible user, ensure their personal notifications are created from group settings
-        if responsible_user_id and responsible_user_id != 0:
-            PersonalEventNotificationRepo.create_from_group_for_user(eid, gid, responsible_user_id)
+        # Get current responsible user before updating
+        event = EventRepo.get_by_id(eid)
+        old_responsible = event[4] if event else None
+        
+        # Update responsible user
+        new_responsible = responsible_user_id if responsible_user_id != 0 else None
+        EventRepo.set_responsible(eid, new_responsible)
+        
+        # Update personal notifications
+        PersonalEventNotificationRepo.update_user_for_event(eid, old_responsible, new_responsible, gid)
     # Build redirect URL with all parameters
     params = []
     if tab:
@@ -820,7 +831,11 @@ async def event_settings(request: Request, gid: int, eid: int):
     # Get responsible person name
     responsible_name = member_name_map.get(event[4]) if event[4] else None
     
-    return render('event_settings.html', group=group, event=event, members=member_options, event_notifications=event_notifications, personal_notifications=personal_notifications, role=role, responsible_name=responsible_name, event_time_display=event_time_display, _calculate_notification_time=_calculate_notification_time, request=request)
+    # Get current user info for personal notifications
+    current_user_telegram_id = urow[1]  # urow[1] is telegram_id
+    current_user_display_name = member_name_map.get(user_id, f"@{urow[2]}" if urow[2] else str(current_user_telegram_id))
+    
+    return render('event_settings.html', group=group, event=event, members=member_options, event_notifications=event_notifications, personal_notifications=personal_notifications, role=role, responsible_name=responsible_name, event_time_display=event_time_display, current_user_telegram_id=current_user_telegram_id, current_user_display_name=current_user_display_name, _calculate_notification_time=_calculate_notification_time, request=request)
 
 
 @app.post('/group/{gid}/events/{eid}/notifications/add')
@@ -1082,18 +1097,15 @@ async def book_event(request: Request, gid: int, eid: int, tab: str | None = For
         print(f"BOOKING ERROR: user {user_id} is already responsible for event {eid}")
         return RedirectResponse(f"/group/{gid}?ok=booking_error", status_code=303)
     
-    # Book the event
+    # Book the event - use set_responsible to create notifications
     print(f"UPDATING EVENT: setting responsible to {user_id}")
-    EventRepo.update_responsible(eid, user_id)
+    EventRepo.set_responsible(eid, user_id)
     
     # Verify the update
     event_after = EventRepo.get_by_id(eid)
     print(f"EVENT AFTER: {event_after}")
     
     BookingRepo.add_booking(user_id, eid)
-    
-    # Create personal notifications for this user
-    PersonalEventNotificationRepo.create_from_group_for_user(eid, gid, user_id)
     
     print(f"BOOKING SUCCESS")
     # Build redirect URL with all parameters
@@ -1138,8 +1150,8 @@ async def unbook_event(request: Request, gid: int, eid: int, tab: str | None = F
     print(f"EVENT BEFORE: {event}")
     if event and event[4] == user_id:  # user is responsible
         print(f"REMOVING RESPONSIBILITY: user {user_id} is responsible for event {eid}")
-        # Remove responsibility (set to None)
-        EventRepo.update_responsible(eid, None)
+        # Remove responsibility (set to None) - use set_responsible to handle notifications
+        EventRepo.set_responsible(eid, None)
         
         # Verify the update
         event_after = EventRepo.get_by_id(eid)
