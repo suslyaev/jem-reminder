@@ -79,6 +79,12 @@ def apply_migrations(conn):
         if not check_column_exists(conn, 'events', 'updated_at'):
             print("  - Добавляем колонку 'updated_at' в таблицу events...")
             cursor.execute("ALTER TABLE events ADD COLUMN updated_at TEXT")
+
+    # Блокировка пользователей
+    if check_table_exists(conn, 'users') and not check_column_exists(conn, 'users', 'blocked'):
+        print("  - Добавляем колонку 'blocked' в таблицу users...")
+        cursor = conn.cursor()
+        cursor.execute("ALTER TABLE users ADD COLUMN blocked INTEGER NOT NULL DEFAULT 0")
     
     print("Миграции применены успешно!")
 
