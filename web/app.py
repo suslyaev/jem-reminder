@@ -981,7 +981,8 @@ async def convert_event_to_template(request: Request, gid: int, eid: int, kind: 
     event = EventRepo.get_by_id(eid)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
-    _, name, time_str, group_id, _ = event
+    # event tuple now includes allow_multi_roles_per_user at index 5
+    _, name, time_str, group_id, _resp, _allow_multi = event
 
     tz = 'Europe/Moscow'
     # Map repeat_unit -> freq
@@ -989,6 +990,12 @@ async def convert_event_to_template(request: Request, gid: int, eid: int, kind: 
     freq = unit_map.get(repeat_unit, 'weekly') if kind != 'one_time' else None
     interval = repeat_every if kind != 'one_time' else None
     template_id = EventTemplateRepo.create(group_id, name, None, 'recurring' if kind != 'one_time' else 'one_time', time_str, tz, planning_horizon_days, allow_multi_roles_per_user, freq=freq, interval=interval, byweekday=None)
+
+    # Link current event as generated occurrence for its datetime to avoid duplicate creation
+    try:
+        TemplateGenerationRepo.mark_generated(template_id, time_str, eid)
+    except Exception:
+        pass
 
     # copy current event role reqs into template defaults
     try:
@@ -1033,11 +1040,32 @@ async def update_template_from_event(request: Request, gid: int, eid: int,
         template_id = row[0]
 
     # Update only provided basic fields (periodicity) - skip if roles_only
-    if not roles_only and repeat_every is not None and repeat_unit is not None and planning_horizon_days is not None and allow_multi_roles_per_user is not None:
+    if not roles_only and (repeat_every is not None or repeat_unit is not None or planning_horizon_days is not None or allow_multi_roles_per_user is not None):
+        # Load current template to fill missing fields
+        tpl = EventTemplateRepo.get(template_id)
+        # tpl indices: 0 id,1 group_id,2 name,3 descr,4 kind,5 base_time,6 timezone,7 planning_horizon_days,8 allow_multi,9 freq,10 interval
+        current_horizon = tpl[7] if tpl else 60
+        current_allow_multi = tpl[8] if tpl else 0
+        current_freq = tpl[9] if tpl else 'weekly'
+        current_interval = tpl[10] if tpl else 1
         unit_map = {'day': 'daily', 'week': 'weekly', 'month': 'monthly'}
-        freq = unit_map.get(repeat_unit, 'weekly')
-        interval = repeat_every
-        EventTemplateRepo.update_basic(template_id, planning_horizon_days=planning_horizon_days, allow_multi_roles_per_user=allow_multi_roles_per_user, freq=freq, interval=interval)
+        new_freq = unit_map.get(repeat_unit, current_freq)
+        new_interval = repeat_every if repeat_every is not None else current_interval
+        new_horizon = planning_horizon_days if planning_horizon_days is not None else current_horizon
+        new_allow = (1 if allow_multi_roles_per_user else 0) if allow_multi_roles_per_user is not None else current_allow_multi
+        EventTemplateRepo.update_basic(template_id, planning_horizon_days=new_horizon, allow_multi_roles_per_user=new_allow, freq=new_freq, interval=new_interval)
+        # Set base_time to current event time so generation anchors from this event
+        try:
+            with get_conn() as conn:
+                cur = conn.cursor()
+                # Read this event time
+                cur.execute("SELECT time FROM events WHERE id = ?", (eid,))
+                row = cur.fetchone()
+                if row and row[0]:
+                    cur.execute("UPDATE event_templates SET base_time = ? WHERE id = ?", (row[0], template_id))
+                    conn.commit()
+        except Exception:
+            pass
     elif allow_multi_roles_per_user is not None:
         # Allow updating only the multi-roles flag (when saving roles without touching periodicity)
         EventTemplateRepo.set_allow_multi_roles(template_id, allow_multi_roles_per_user)
@@ -1056,14 +1084,31 @@ async def update_template_from_event(request: Request, gid: int, eid: int,
             names = names_flat
             items = [(n, 1) for n in names]
             TemplateRoleRequirementRepo.replace_all(template_id, items)
+            # Also sync roles to this specific event so the group list reflects changes immediately
+            try:
+                EventRoleRequirementRepo.replace_for_event(eid, names)
+            except Exception:
+                pass
         elif roles_only:
             # If roles_only flag is set but no role_names provided, clear all roles
             TemplateRoleRequirementRepo.replace_all(template_id, [])
+            # Also clear roles for this specific event
+            try:
+                EventRoleRequirementRepo.replace_for_event(eid, [])
+            except Exception:
+                pass
     except Exception:
         pass
 
     if regenerate:
         try:
+            # If this event has its own roles, make them the template defaults before generation
+            try:
+                evt_roles = EventRoleRequirementRepo.list_for_event(eid)
+                if evt_roles:
+                    TemplateRoleRequirementRepo.replace_all(template_id, [(rname, rreq) for rname, rreq in evt_roles])
+            except Exception:
+                pass
             TemplateGenerator.generate_for_template(template_id)
         except Exception:
             pass
@@ -1420,7 +1465,17 @@ async def book_role(request: Request, gid: int, eid: int, role_name: str, tab: s
                 return RedirectResponse(f"/group/{gid}?ok=booking_error", status_code=303)
 
     ok = 'event_booked'
+    # Check whether user had any role before assignment
+    had_any_role_before = any(uid == target_user_id for uid in assigned.values())
     if EventRoleAssignmentRepo.assign(eid, role_name, target_user_id):
+        # If it's the first role for this user on this event, create personal notifications from group templates
+        if not had_any_role_before:
+            try:
+                evt = EventRepo.get_by_id(eid)
+                group_id = evt[3] if evt else gid
+                PersonalEventNotificationRepo.create_from_personal_templates(eid, group_id, target_user_id)
+            except Exception:
+                pass
         ok = 'event_booked'
     else:
         ok = 'booking_error'
@@ -1443,8 +1498,17 @@ async def unbook_role(request: Request, gid: int, eid: int, role_name: str, tab:
     user_id = urow[0]
 
     ok = 'unbooked'
+    # Attempt unassign
     if not EventRoleAssignmentRepo.unassign(eid, role_name, user_id):
         ok = 'booking_error'
+    else:
+        # After unassign, if user has no roles left for this event, delete personal notifications
+        try:
+            remaining = {r: uid for r, uid in EventRoleAssignmentRepo.list_for_event(eid)}
+            if all(uid != user_id for uid in remaining.values()):
+                PersonalEventNotificationRepo.delete_by_user_and_event(user_id, eid)
+        except Exception:
+            pass
 
     params = []
     if tab:

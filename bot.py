@@ -1079,83 +1079,82 @@ async def cb_group_remind_period(callback: types.CallbackQuery):
         text = f"• {name}\n{format_event_time_display(time_str)}"
         await bot.send_message(target_chat_id, text, reply_markup=kb.as_markup())
 
-@dp.callback_query(lambda c: c.data and c.data.startswith('evt_book_toggle:'))
-async def cb_evt_book_toggle(callback: types.CallbackQuery):
+@dp.callback_query(lambda c: c.data and c.data.startswith('role_book:'))
+async def cb_role_book(callback: types.CallbackQuery):
     try:
-        _, eid, gid = callback.data.split(':')
-        eid_i = int(eid)
-        gid_i = int(gid)
-        print(f"BOOK TOGGLE: eid={eid_i}, gid={gid_i}, user_id={callback.from_user.id}")
+        _, eid, gid, role_name = callback.data.split(':', 3)
+        eid_i = int(eid); gid_i = int(gid)
         await callback.answer()
     except Exception as e:
-        print(f"BOOK TOGGLE ERROR: {e}")
-        await callback.answer(f"Ошибка: {e}")
-        return
-    # Fetch event
-    ev = EventRepo.get_by_id(eid_i)
-    if not ev:
-        await callback.message.answer("Мероприятие не найдено")
-        return
-    _id, name, time_str, group_id, resp_uid = ev
-    # If no responsible -> set to current user
-    if not resp_uid:
-        # ensure user exists
+        return await callback.answer(f"Ошибка: {e}")
+    # Ensure user exists in our DB
+    urow = UserRepo.get_by_telegram_id(callback.from_user.id)
+    if not urow:
+        UserRepo.upsert_user(callback.from_user.id, callback.from_user.username, None, callback.from_user.first_name, callback.from_user.last_name)
         urow = UserRepo.get_by_telegram_id(callback.from_user.id)
-        if not urow:
-            UserRepo.upsert_user(
-                telegram_id=callback.from_user.id,
-                username=callback.from_user.username,
-                phone=None,
-                first_name=callback.from_user.first_name,
-                last_name=callback.from_user.last_name,
-            )
-            urow = UserRepo.get_by_telegram_id(callback.from_user.id)
-        internal_user_id = urow[0]
-        # Ensure the user sees the group in their menu only if he has no role yet
-        try:
-            current_role = RoleRepo.get_user_role(internal_user_id, gid_i)
-            if not current_role:
-                RoleRepo.add_role(internal_user_id, gid_i, 'member', confirmed=True)
-        except Exception:
-            pass
-        # Set responsible user - this will handle personal notifications correctly
-        print(f"SETTING RESPONSIBLE: event_id={eid_i}, user_id={internal_user_id}")
-        EventRepo.set_responsible(eid_i, internal_user_id)
-        print(f"RESPONSIBLE SET SUCCESSFULLY")
+    user_id = urow[0]
+    # Add member role if missing for visibility
+    try:
+        if not RoleRepo.get_user_role(user_id, gid_i):
+            RoleRepo.add_role(user_id, gid_i, 'member', True)
+    except Exception:
+        pass
+    # Assign role via web repo logic
+    from services.repositories import EventRoleAssignmentRepo
+    # Check multi-role flag and existing assignments for this user
+    try:
+        ev = EventRepo.get_by_id(eid_i)
+        allow_multi = ev[5] if ev and len(ev) > 5 else 0
+        if not allow_multi:
+            existing = [uid for _r, uid in EventRoleAssignmentRepo.list_for_event(eid_i) if uid == user_id]
+            if existing:
+                return await callback.answer("Допустима только 1 бронь в этом мероприятии", show_alert=True)
+    except Exception:
+        pass
+    if EventRoleAssignmentRepo.assign(eid_i, role_name, user_id):
+        await refresh_role_keyboard(callback.message, gid_i, eid_i)
     else:
-        # Allow the responsible themselves to unbook; otherwise require owner/admin/superadmin
-        urow = UserRepo.get_by_telegram_id(callback.from_user.id)
-        internal_user_id = urow[0] if urow else None
-        if internal_user_id == resp_uid:
-            EventRepo.set_responsible(eid_i, None)
-        else:
-            role = RoleRepo.get_user_role(internal_user_id, gid_i) if internal_user_id is not None else None
-            if not (callback.from_user.id == SUPERADMIN_ID or role in ("owner", "admin")):
-                await callback.answer("Только владелец/админ/суперадмин может снять бронь", show_alert=False)
-                return
-            EventRepo.set_responsible(eid_i, None)
-    # Update one message button label
-    ev2 = EventRepo.get_by_id(eid_i)
-    _id2, _name2, _time2, _group2, resp2 = ev2
-    if resp2:
-        u = UserRepo.get_by_id(resp2)
-        if u:
-            _iid, _tid, _uname, _phone, _first, _last = u
-            if _uname:
-                label = f"@{_uname}"
-            elif _first or _last:
-                label = f"{(_first or '').strip()} {(_last or '').strip()}".strip()
-            else:
-                label = str(_tid)
-        else:
-            label = str(resp2)
+        await callback.answer("Уже занято", show_alert=False)
+
+@dp.callback_query(lambda c: c.data and c.data.startswith('role_unbook:'))
+async def cb_role_unbook(callback: types.CallbackQuery):
+    try:
+        _, eid, gid, role_name = callback.data.split(':', 3)
+        eid_i = int(eid); gid_i = int(gid)
+        await callback.answer()
+    except Exception as e:
+        return await callback.answer(f"Ошибка: {e}")
+    urow = UserRepo.get_by_telegram_id(callback.from_user.id)
+    user_id = urow[0] if urow else None
+    if not user_id:
+        return await callback.answer("Нет пользователя", show_alert=False)
+    from services.repositories import EventRoleAssignmentRepo
+    if EventRoleAssignmentRepo.unassign(eid_i, role_name, user_id):
+        await refresh_role_keyboard(callback.message, gid_i, eid_i)
     else:
-        label = "Забронировать"
+        await callback.answer("Нельзя снять чужую бронь", show_alert=False)
+
+async def refresh_role_keyboard(message: types.Message, gid: int, eid: int):
+    # Rebuild keyboard for roles
+    from services.repositories import EventRoleRequirementRepo, EventRoleAssignmentRepo, DisplayNameRepo
+    reqs = EventRoleRequirementRepo.list_for_event(eid)
+    asgs = EventRoleAssignmentRepo.list_for_event(eid)
+    asg_map = {}
+    for r, uid in asgs:
+        asg_map.setdefault(r, []).append(uid)
     from aiogram.utils.keyboard import InlineKeyboardBuilder
     kb = InlineKeyboardBuilder()
-    kb.row(types.InlineKeyboardButton(text=label, callback_data=f"evt_book_toggle:{eid_i}:{gid_i}"))
+    for rname, _req in sorted(reqs, key=lambda x: x[0].lower()):
+        assigned = asg_map.get(rname, [])
+        if assigned:
+            uid = assigned[0]
+            dn = DisplayNameRepo.get_display_name(gid, uid)
+            label = dn if dn else f"ID:{uid}"
+            kb.row(types.InlineKeyboardButton(text=f"✅ {rname}: {label}", callback_data=f"role_unbook:{eid}:{gid}:{rname}"))
+        else:
+            kb.row(types.InlineKeyboardButton(text=f"🟢 {rname}: Забронировать", callback_data=f"role_book:{eid}:{gid}:{rname}"))
     try:
-        await bot.edit_message_reply_markup(chat_id=callback.message.chat.id, message_id=callback.message.message_id, reply_markup=kb.as_markup())
+        await bot.edit_message_reply_markup(chat_id=message.chat.id, message_id=message.message_id, reply_markup=kb.as_markup())
     except Exception:
         pass
 
@@ -2064,10 +2063,20 @@ async def main():
         for gid, chat_id in groups:
             events = EventRepo.list_by_group(gid)
             for eid, name, time_str, resp_uid in events:
-                try:
-                    evt_dt = datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S').replace(tzinfo=msk)
-                except Exception:
-                    continue
+                # Parse event time (support with and without seconds)
+                evt_dt = None
+                for fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M'):
+                    try:
+                        evt_dt = datetime.strptime(time_str, fmt).replace(tzinfo=msk)
+                        break
+                    except Exception:
+                        pass
+                if evt_dt is None:
+                    try:
+                        evt_dt = datetime.fromisoformat(time_str).replace(tzinfo=msk)
+                    except Exception:
+                        # Skip if cannot parse
+                        continue
                 # Event notifications (group-level sends)
                 for _, time_before, time_unit, message_text in EventNotificationRepo.list_by_event(eid):
                     # compute notify time
@@ -2084,36 +2093,80 @@ async def main():
                         delta_minutes = time_before * 43200
                     notify_dt = evt_dt - timedelta(minutes=delta_minutes)
                     # if it's due within the last minute window
-                    if notify_dt <= now < notify_dt + timedelta(minutes=1):
+                    if notify_dt <= now < (notify_dt + timedelta(minutes=1)):
+                        # Debug log
+                        print(f"[TICK] Group due: gid={gid}, eid={eid}, notify={notify_dt}, now={now}, tb={time_before}{time_unit}")
                         if not DispatchLogRepo.was_sent('event', user_id=None, group_id=gid, event_id=eid, time_before=time_before, time_unit=time_unit):
                             # Build group message per spec
-                            resp_label = None
-                            if resp_uid:
-                                u = UserRepo.get_by_id(resp_uid)
-                                if u:
-                                    _iid, _tid, _uname, _phone, _first, _last = u
-                                    if _uname:
-                                        resp_label = f"@{_uname}"
-                                    elif _first or _last:
-                                        resp_label = f"{(_first or '').strip()} {(_last or '').strip()}".strip()
+                            # Build roles block (assigned/unassigned)
+                            try:
+                                from services.repositories import EventRoleRequirementRepo, EventRoleAssignmentRepo, DisplayNameRepo
+                                role_reqs = EventRoleRequirementRepo.list_for_event(eid)
+                                role_asg = EventRoleAssignmentRepo.list_for_event(eid)
+                                asg_map = {}
+                                for rname, uid in role_asg:
+                                    asg_map.setdefault(rname, []).append(uid)
+                                role_lines = []
+                                for rname, _req in sorted(role_reqs, key=lambda x: x[0].lower()):
+                                    assigned_uids = asg_map.get(rname, [])
+                                    if assigned_uids:
+                                        names = []
+                                        for uid in assigned_uids:
+                                            dn = DisplayNameRepo.get_display_name(gid, uid)
+                                            if dn:
+                                                names.append(dn)
+                                            else:
+                                                u = UserRepo.get_by_id(uid)
+                                                if u and u[2]:
+                                                    names.append(f"@{u[2]}")
+                                                else:
+                                                    names.append(str(uid))
+                                        role_lines.append(f"✅ {rname}: {', '.join(names)}")
                                     else:
-                                        resp_label = str(_tid)
-                                else:
-                                    resp_label = str(resp_uid)
+                                        role_lines.append(f"🟡 {rname}: свободно")
+                            except Exception:
+                                role_lines = []
+
+                            # Build message
                             lines = [
-                                f"Напоминание по мероприятию \"{name}\".",
-                                f"{format_event_time_display(time_str)}",
+                                f"📅 Мероприятие: \"{name}\"",
+                                f"🕒 {format_event_time_display(time_str)}",
                             ]
-                            if resp_label:
-                                lines.append(f"Ответственный - {resp_label}")
+                            if role_lines:
+                                lines.append("")
+                                lines.append("Роли:")
+                                lines.extend(role_lines)
                             else:
-                                lines.append("Ответственный еще не назначен")
+                                lines.append("")
+                                lines.append("Роли не заданы")
+                            if message_text:
+                                lines.append("")
+                                lines.append(str(message_text))
                             text = "\n".join(lines)
-                            # Include booking button
+                            # Build inline keyboard with per-role actions
                             from aiogram.utils.keyboard import InlineKeyboardBuilder
                             kb_ev = InlineKeyboardBuilder()
-                            btn_label = resp_label if resp_label else "Забронировать"
-                            kb_ev.row(types.InlineKeyboardButton(text=btn_label, callback_data=f"evt_book_toggle:{eid}:{gid}"))
+                            try:
+                                from services.repositories import EventRoleRequirementRepo, EventRoleAssignmentRepo, DisplayNameRepo
+                                reqs = EventRoleRequirementRepo.list_for_event(eid)
+                                asgs = EventRoleAssignmentRepo.list_for_event(eid)
+                                asg_map = {}
+                                for r, uid in asgs:
+                                    asg_map.setdefault(r, []).append(uid)
+                                for rname, _req in sorted(reqs, key=lambda x: x[0].lower()):
+                                    assigned = asg_map.get(rname, [])
+                                    if assigned:
+                                        # Show first assignee name (or count)
+                                        uid = assigned[0]
+                                        dn = DisplayNameRepo.get_display_name(gid, uid)
+                                        label = dn if dn else f"ID:{uid}"
+                                        btn_text = f"✅ {rname}: {label}"
+                                        # Allow unbook intent; handler will verify ownership
+                                        kb_ev.row(types.InlineKeyboardButton(text=btn_text, callback_data=f"role_unbook:{eid}:{gid}:{rname}"))
+                                    else:
+                                        kb_ev.row(types.InlineKeyboardButton(text=f"🟢 {rname}: Забронировать", callback_data=f"role_book:{eid}:{gid}:{rname}"))
+                            except Exception:
+                                pass
                             try:
                                 await bot.send_message(int(chat_id), text, reply_markup=kb_ev.as_markup())
                             except Exception:
@@ -2142,7 +2195,8 @@ async def main():
                     elif time_unit == 'months':
                         delta_minutes = time_before * 43200
                     notify_dt = evt_dt - timedelta(minutes=delta_minutes)
-                    if notify_dt <= now < notify_dt + timedelta(minutes=1):
+                    if notify_dt <= now < (notify_dt + timedelta(minutes=1)):
+                        print(f"[TICK] Personal due: eid={eid}, uid={user_id}, notify={notify_dt}, now={now}, tb={time_before}{time_unit}")
                         if not DispatchLogRepo.was_sent('personal', user_id=user_id, group_id=None, event_id=eid, time_before=time_before, time_unit=time_unit):
                             u = UserRepo.get_by_id(user_id)
                             if u:
@@ -2150,10 +2204,23 @@ async def main():
                                 # Build personal message per spec
                                 grp_row = GroupRepo.get_by_id(gid)
                                 group_title = grp_row[2] if grp_row else f"Группа {gid}"
-                                text = (
-                                    f"Напоминание в группе \"{group_title}\" по мероприятию \"{name}\", где вы являетесь ответственным.\n"
-                                    f"Начало мероприятия - {format_event_time_display(time_str)}"
-                                )
+                                # Find user's roles for this event
+                                try:
+                                    from services.repositories import EventRoleAssignmentRepo
+                                    user_roles = [r for r, uid in EventRoleAssignmentRepo.list_for_event(eid) if uid == user_id]
+                                except Exception:
+                                    user_roles = []
+                                role_info = f"Роли: {', '.join(user_roles)}" if user_roles else "Роль не указана"
+                                lines = [
+                                    f"🔔 Личное напоминание в группе \"{group_title}\"",
+                                    f"📅 Мероприятие: \"{name}\"",
+                                    f"🕒 {format_event_time_display(time_str)}",
+                                    role_info,
+                                ]
+                                if message_text:
+                                    lines.append("")
+                                    lines.append(str(message_text))
+                                text = "\n".join(lines)
                                 try:
                                     await bot.send_message(_tid, text)
                                     DispatchLogRepo.mark_sent('personal', user_id=user_id, group_id=None, event_id=eid, time_before=time_before, time_unit=time_unit)

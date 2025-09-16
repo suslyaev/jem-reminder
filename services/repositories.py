@@ -1312,9 +1312,8 @@ class TemplateGenerator:
             *_
         ) = tpl
 
-        # Time window
+        # Time window: horizon counted from the base event date
         now = datetime.now()
-        horizon_end = now + timedelta(days=int(planning_horizon_days or 60))
 
         # Base start time
         try:
@@ -1324,6 +1323,9 @@ class TemplateGenerator:
                 base_dt = datetime.fromisoformat(base_time.replace('Z', ''))
             except Exception:
                 return 0
+
+        # Horizon end relative to base date
+        horizon_end = base_dt + timedelta(days=int(planning_horizon_days or 60))
 
         # Exceptions set (YYYY-MM-DD)
         exc_dates = set()
@@ -1365,7 +1367,7 @@ class TemplateGenerator:
         interval = int(interval or 1)
 
         if freq == 'daily':
-            start_date = max(now, base_dt)
+            start_date = base_dt
             for day_dt in TemplateGenerator._daterange(start_date, horizon_end, interval):
                 if day_dt.strftime('%Y-%m-%d') in exc_dates:
                     continue
@@ -1376,12 +1378,6 @@ class TemplateGenerator:
         elif freq == 'weekly':
             # Generate strictly from the first event date every N weeks, ignoring byweekday
             cur_dt = base_dt
-            # if base in past, advance to the next occurrence >= now
-            if cur_dt < now:
-                delta_weeks = ( (now - cur_dt).days // 7 )
-                cur_dt = cur_dt + timedelta(weeks=delta_weeks)
-                while cur_dt < now:
-                    cur_dt += timedelta(weeks=interval)
             while cur_dt <= horizon_end:
                 if cur_dt.strftime('%Y-%m-%d') not in exc_dates:
                     ensure_occurrence(cur_dt.replace())

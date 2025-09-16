@@ -42,27 +42,20 @@
       <div class="form-row" style="margin-top:12px; flex-direction: column; align-items: stretch; gap:8px;">
         <div style="display:flex; align-items:center; justify-content: space-between;">
           <label style="margin:0;">Роли</label>
-          <label style="display:flex; align-items:center; gap:6px; font-weight: normal;">
-            {% if template_row %}
-              <input type="checkbox" form="tpl-update-form" name="allow_multi_roles_per_user" value="1" {% if (template_row[7] or 0) %}checked{% endif %}> Несколько ролей на человека
-            {% else %}
-              <form id="evt-roles-form" method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/roles/update{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">
-                <input type="checkbox" name="allow_multi_roles_per_user" value="1" {% if (event[5] or 0) %}checked{% endif %}> Несколько ролей на человека
-              </form>
-            {% endif %}
-          </label>
+          <form id="evt-roles-form" method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/roles/update{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">
+            <label style="display:flex; align-items:center; gap:6px; font-weight: normal;">
+              <input type="checkbox" name="allow_multi_roles_per_user" value="1" {% if (event[5] or 0) %}checked{% endif %}> Несколько ролей на человека
+            </label>
+          </form>
         </div>
         <div id="rolesGrid" style="display:grid; grid-template-columns: 1fr 36px; gap:8px; align-items:center;">
           <div style="color:#9ca3af;">Название роли</div>
           <div></div>
-          {% if template_row %}
-            {% set roles = template_roles if template_roles else [] %}
-          {% else %}
-            {% set roles = event_roles if event_roles else [] %}
-          {% endif %}
+          {# Предпочитаем роли события; если пусто — предварительно заполняем ролями шаблона, но сохраняем в событие #}
+          {% set roles = event_roles if event_roles else (template_roles if template_roles else []) %}
           {% if roles %}
             {% for rname, rreq in roles %}
-              <input type="text" {% if template_row %}form="tpl-roles-form"{% else %}form="evt-roles-form"{% endif %} name="role_names" value="{{ rname }}" style="width:100%;">
+              <input type="text" form="evt-roles-form" name="role_names" value="{{ rname }}" style="width:100%;">
               <button type="button" class="btn" onclick="removeRoleRow(this)" style="background:#ef4444; padding:4px 8px;">✕</button>
             {% endfor %}
           {% else %}
@@ -73,11 +66,7 @@
           <button type="button" class="btn" onclick="addRoleRow()">Добавить роль</button>
         </div>
         <div>
-          {% if template_row %}
-            <div style="margin-top:8px;"><button class="btn" type="submit" form="tpl-roles-form">Сохранить роли</button></div>
-          {% else %}
-            <div style="margin-top:8px;"><button class="btn" type="submit" form="evt-roles-form">Сохранить роли</button></div>
-          {% endif %}
+          <div style="margin-top:8px;"><button class="btn" type="submit" form="evt-roles-form">Сохранить роли</button></div>
         </div>
       </div>
       {% endif %}
@@ -132,10 +121,7 @@
           </div>
         </form>
         
-        <!-- Отдельная форма для ролей -->
-        <form id="tpl-roles-form" method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/template/update{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">
-          <input type="hidden" name="roles_only" value="1">
-        </form>
+        {# Роли шаблона редактируются отдельно при необходимости. Здесь роли редактируются на уровне события. #}
       {% else %}
         <!-- Нет шаблона: форма конвертации, по умолчанию Разовое -->
         <form id="tpl-convert-form" method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/convert-to-template{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="margin-top: 8px;">

@@ -430,25 +430,24 @@
                     <button class="btn" type="button" onclick="deleteEvent({{ e.id }})" style="background: var(--danger); color: white; border: none; border-radius: 4px; padding: 8px 12px; cursor: pointer; font-size: 16px;">✕</button>
                   </div>
                   
-                  <!-- Вторая строка: дата, время, ответственный -->
+                  <!-- Вторая строка: дата и время -->
                   <div class="row" style="margin-bottom: 12px; width: 100%;">
                     <input class="time-input" type="datetime-local" name="time" value="{{ e.time_input }}" style="flex: 1; margin-right: 8px; max-width: 180px;" />
-                    {% if member_options and member_options|length > 0 %}
-                      <div class="autocomplete-container" style="flex: 0.3; max-width: 100px;">
-                        <input class="autocomplete-input" type="text" placeholder="— ответственный —" 
-                               value="{% if e.responsible_user_id %}{{ member_options|selectattr('0', 'equalto', e.responsible_user_id)|map(attribute='1')|first }}{% endif %}"
-                               data-user-id="{% if e.responsible_user_id %}{{ e.responsible_user_id }}{% else %}0{% endif %}"
-                               autocomplete="off">
-                        <input type="hidden" name="responsible_user_id" value="{% if e.responsible_user_id %}{{ e.responsible_user_id }}{% else %}0{% endif %}">
-                        <div class="autocomplete-dropdown" style="display: none;">
-                          <div class="autocomplete-option" data-value="0">— ответственный —</div>
-                          {% for uid, label in member_options %}
-                            <div class="autocomplete-option" data-value="{{ uid }}">{{ label }}</div>
-                          {% endfor %}
+                  </div>
+
+                  {% if e.role_requirements and e.role_requirements|length > 0 %}
+                  <div class="row" style="flex-direction: column; align-items: stretch; gap: 6px;">
+                    {% for rname, req in e.role_requirements %}
+                      <div class="row" style="gap: 8px; align-items: center;">
+                        <div style="min-width: 120px; color: var(--muted);">{{ rname }}</div>
+                        {% set assigned_uid = e.role_assignments.get(rname) %}
+                        <div class="autocomplete-container" style="flex: 1;">
+                          <input class="autocomplete-input" type="text" value="{% if assigned_uid %}{{ member_options|selectattr('0','equalto', assigned_uid)|map(attribute='1')|first }}{% else %}Свободно{% endif %}" disabled>
                         </div>
                       </div>
-                    {% endif %}
+                    {% endfor %}
                   </div>
+                  {% endif %}
                   
                   <!-- Кнопки: слева - сохранить, справа - настройки -->
                   <div class="actions" style="justify-content: space-between; margin-top: 8px;">
