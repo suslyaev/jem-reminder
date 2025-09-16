@@ -62,6 +62,7 @@
 
       {% if role in ['admin', 'owner', 'superadmin'] %}
       <h3>Участники группы</h3>
+      <hr style="margin: 16px 0; border-color: var(--border);">
       {% if not members %}
         <div class="empty">Нет участников</div>
       {% else %}
@@ -145,6 +146,7 @@
 
       {% if role in ['admin', 'owner', 'superadmin'] %}
       <h3>Оповещения</h3>
+      <hr style="margin: 16px 0; border-color: var(--border);">
       <div class="tabs" style="margin-bottom: 16px;">
         <button class="tab-btn active" onclick="switchTab('group')" id="group-tab">Групповые</button>
         <button class="tab-btn" onclick="switchTab('personal')" id="personal-tab">Личные</button>

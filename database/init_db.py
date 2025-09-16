@@ -66,6 +66,19 @@ def apply_migrations(conn):
         cursor = conn.cursor()
         cursor.execute("ALTER TABLE events ADD COLUMN allow_multi_roles_per_user INTEGER NOT NULL DEFAULT 0")
         print("  - Колонка добавлена")
+
+    # Добавляем аудиторские поля для событий, если отсутствуют
+    if check_table_exists(conn, 'events'):
+        cursor = conn.cursor()
+        if not check_column_exists(conn, 'events', 'created_by_user_id'):
+            print("  - Добавляем колонку 'created_by_user_id' в таблицу events...")
+            cursor.execute("ALTER TABLE events ADD COLUMN created_by_user_id INTEGER")
+        if not check_column_exists(conn, 'events', 'updated_by_user_id'):
+            print("  - Добавляем колонку 'updated_by_user_id' в таблицу events...")
+            cursor.execute("ALTER TABLE events ADD COLUMN updated_by_user_id INTEGER")
+        if not check_column_exists(conn, 'events', 'updated_at'):
+            print("  - Добавляем колонку 'updated_at' в таблицу events...")
+            cursor.execute("ALTER TABLE events ADD COLUMN updated_at TEXT")
     
     print("Миграции применены успешно!")
 

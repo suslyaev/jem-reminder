@@ -356,6 +356,13 @@
                     </div>
                     <a class="gear-inline" href="/group/{{ group[0] }}/events/{{ e.id }}/settings{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Настройки" style="text-decoration: none; padding: 8px 12px; background: var(--primary); color: white; border-radius: 6px; font-size: 16px; border: none; cursor: pointer; display: inline-block; text-align: center; min-width: 40px;">⚙️</a>
                   </div>
+                  <div class="meta" style="margin-top:6px; color: var(--muted); font-size: 12px;">
+                    Создал: {{ audit_labels.get(e.id, {}).get('created_by', '—') }} в {{ audit_labels.get(e.id, {}).get('created_at', '—') }}
+                    {% if audit_labels.get(e.id, {}).get('updated_by') and audit_labels.get(e.id, {}).get('updated_by') != '—' %}
+                      <br>
+                      Изменил: {{ audit_labels.get(e.id, {}).get('updated_by') }} в {{ audit_labels.get(e.id, {}).get('updated_at', '—') }}
+                    {% endif %}
+                  </div>
                   <!-- Скрытые поля для параметров пагинации -->
                   <input type="hidden" name="tab" value="{{ active_tab }}">
                   <input type="hidden" name="page" value="{{ current_page }}">
@@ -395,6 +402,13 @@
                 {% endif %}
                 <div class="actions" style="justify-content: flex-end; margin-top: 8px;">
                   <a class="gear-inline" href="/group/{{ group[0] }}/events/{{ e.id }}/settings{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Настройки" style="text-decoration: none; padding: 8px 12px; background: var(--primary); color: white; border-radius: 6px; font-size: 16px; border: none; cursor: pointer; display: inline-block; text-align: center; min-width: 40px;">⚙️</a>
+                </div>
+                <div class="meta" style="margin-top:6px; color: var(--muted); font-size: 12px;">
+                  Создал: {{ audit_labels.get(e.id, {}).get('created_by', '—') }} в {{ audit_labels.get(e.id, {}).get('created_at', '—') }}
+                  {% if audit_labels.get(e.id, {}).get('updated_by') and audit_labels.get(e.id, {}).get('updated_by') != '—' %}
+                    <br>
+                    Изменил: {{ audit_labels.get(e.id, {}).get('updated_by') }} в {{ audit_labels.get(e.id, {}).get('updated_at', '—') }}
+                  {% endif %}
                 </div>
               {% endif %}
             </div>
@@ -517,6 +531,12 @@
                 {% endif %}
                 <div class="actions" style="justify-content: flex-end; margin-top: 8px;">
                   <a class="gear-inline" href="/group/{{ group[0] }}/events/{{ e.id }}/settings{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Настройки" style="text-decoration: none; padding: 8px 12px; background: var(--primary); color: white; border-radius: 6px; font-size: 16px; border: none; cursor: pointer; display: inline-block; text-align: center; min-width: 40px;">⚙️</a>
+                </div>
+                <div class="meta" style="margin-top:6px; color: var(--muted); font-size: 12px;">
+                  Создал: {{ audit_labels.get(e.id, {}).get('created_by', '—') }} в {{ audit_labels.get(e.id, {}).get('created_at', '—') }}
+                  {% if audit_labels.get(e.id, {}).get('updated_by') and audit_labels.get(e.id, {}).get('updated_by') != '—' %}
+                    • Изменил: {{ audit_labels.get(e.id, {}).get('updated_by') }} в {{ audit_labels.get(e.id, {}).get('updated_at', '—') }}
+                  {% endif %}
                 </div>
               {% endif %}
               </div>

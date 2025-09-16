@@ -472,13 +472,33 @@ class EventRepo:
             return cur.fetchone()
 
     @staticmethod
-    def create(group_id: int, name: str, time_str: str, responsible_user_id: Optional[int] = None) -> int:
+    def get_audit(event_id: int) -> Tuple[Optional[int], Optional[str], Optional[int], Optional[str]]:
+        """Return (created_by_user_id, created_at, updated_by_user_id, updated_at)"""
         with get_conn() as conn:
             cur = conn.cursor()
             cur.execute(
-                "INSERT INTO events (name, time, group_id, responsible_user_id) VALUES (?,?,?,?)",
-                (name, time_str, group_id, responsible_user_id),
+                "SELECT created_by_user_id, created_at, updated_by_user_id, updated_at FROM events WHERE id = ?",
+                (event_id,),
             )
+            row = cur.fetchone()
+            if not row:
+                return (None, None, None, None)
+            return row[0], row[1], row[2], row[3]
+
+    @staticmethod
+    def create(group_id: int, name: str, time_str: str, responsible_user_id: Optional[int] = None, created_by_user_id: Optional[int] = None) -> int:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            if created_by_user_id is not None:
+                cur.execute(
+                    "INSERT INTO events (name, time, group_id, responsible_user_id, created_by_user_id) VALUES (?,?,?,?,?)",
+                    (name, time_str, group_id, responsible_user_id, created_by_user_id),
+                )
+            else:
+                cur.execute(
+                    "INSERT INTO events (name, time, group_id, responsible_user_id) VALUES (?,?,?,?)",
+                    (name, time_str, group_id, responsible_user_id),
+                )
             conn.commit()
             return cur.lastrowid
 
@@ -519,25 +539,34 @@ class EventRepo:
                     PersonalEventNotificationRepo.create_from_personal_templates(event_id, group_id, user_id)
 
     @staticmethod
-    def update_name(event_id: int, name: str) -> None:
+    def update_name(event_id: int, name: str, updated_by_user_id: Optional[int] = None) -> None:
         with get_conn() as conn:
             cur = conn.cursor()
-            cur.execute("UPDATE events SET name = ? WHERE id = ?", (name, event_id))
+            if updated_by_user_id is not None:
+                cur.execute("UPDATE events SET name = ?, updated_by_user_id = ?, updated_at = datetime('now') WHERE id = ?", (name, updated_by_user_id, event_id))
+            else:
+                cur.execute("UPDATE events SET name = ? WHERE id = ?", (name, event_id))
             conn.commit()
 
     @staticmethod
-    def update_time(event_id: int, time_str: str) -> None:
+    def update_time(event_id: int, time_str: str, updated_by_user_id: Optional[int] = None) -> None:
         with get_conn() as conn:
             cur = conn.cursor()
-            cur.execute("UPDATE events SET time = ? WHERE id = ?", (time_str, event_id))
+            if updated_by_user_id is not None:
+                cur.execute("UPDATE events SET time = ?, updated_by_user_id = ?, updated_at = datetime('now') WHERE id = ?", (time_str, updated_by_user_id, event_id))
+            else:
+                cur.execute("UPDATE events SET time = ? WHERE id = ?", (time_str, event_id))
             conn.commit()
 
     @staticmethod
-    def update_responsible(event_id: int, responsible_user_id: Optional[int]) -> None:
+    def update_responsible(event_id: int, responsible_user_id: Optional[int], updated_by_user_id: Optional[int] = None) -> None:
         print(f"EventRepo.update_responsible: event_id={event_id}, responsible_user_id={responsible_user_id}")
         with get_conn() as conn:
             cur = conn.cursor()
-            cur.execute("UPDATE events SET responsible_user_id = ? WHERE id = ?", (responsible_user_id, event_id))
+            if updated_by_user_id is not None:
+                cur.execute("UPDATE events SET responsible_user_id = ?, updated_by_user_id = ?, updated_at = datetime('now') WHERE id = ?", (responsible_user_id, updated_by_user_id, event_id))
+            else:
+                cur.execute("UPDATE events SET responsible_user_id = ? WHERE id = ?", (responsible_user_id, event_id))
             rows_affected = cur.rowcount
             print(f"EventRepo.update_responsible: rows affected = {rows_affected}")
             conn.commit()

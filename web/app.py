@@ -398,6 +398,41 @@ async def group_view(request: Request, gid: int, tab: str = None, page: int = 1,
         member_rows = filtered_member_rows
     
     member_options = [(mid, member_name_map[mid]) for mid, _ in member_rows]
+
+    # Build audit labels for events
+    audit_labels = {}
+    try:
+        for eid, _, _, _ in events:
+            c_uid, c_at, u_uid, u_at = EventRepo.get_audit(eid)
+            def _fmt_dt_ru(dt_str: str | None) -> str:
+                if not dt_str:
+                    return '—'
+                from datetime import datetime as _dt
+                for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+                    try:
+                        d = _dt.strptime(dt_str, fmt)
+                        return d.strftime("%d.%m.%Y %H:%M:%S")
+                    except Exception:
+                        continue
+                return dt_str
+            def label_for(uid: int | None) -> str:
+                if not uid:
+                    return '—'
+                dn = DisplayNameRepo.get_display_name(gid, uid)
+                if dn:
+                    return dn
+                u = UserRepo.get_by_id(uid)
+                if u and u[2]:
+                    return f"@{u[2]}"
+                return str(uid)
+            audit_labels[eid] = {
+                'created_by': label_for(c_uid),
+                'created_at': _fmt_dt_ru(c_at),
+                'updated_by': label_for(u_uid),
+                'updated_at': _fmt_dt_ru(u_at),
+            }
+    except Exception:
+        audit_labels = {}
     # Разделяем мероприятия на активные и архивные
     from datetime import datetime
     now = datetime.now()
@@ -505,7 +540,7 @@ async def group_view(request: Request, gid: int, tab: str = None, page: int = 1,
     archived_events = archived_pagination['events']
     
     event_count = GroupRepo.count_group_events(gid)
-    return render('group.html', group=group, role=_role_label(role or 'participant'), is_admin=is_admin, active_events=active_events, archived_events=archived_events, active_pagination=active_pagination, archived_pagination=archived_pagination, booked_ids=booked_ids, responsible_ids=responsible_ids, display_name=display_name, bookings_map=bookings_map, member_options=member_options, member_name_map=member_name_map, event_count=event_count, active_tab=tab or 'active', current_page=page, per_page=per_page, request=request, current_user_id=user_id)
+    return render('group.html', group=group, role=_role_label(role or 'participant'), is_admin=is_admin, active_events=active_events, archived_events=archived_events, active_pagination=active_pagination, archived_pagination=archived_pagination, booked_ids=booked_ids, responsible_ids=responsible_ids, display_name=display_name, bookings_map=bookings_map, member_options=member_options, member_name_map=member_name_map, event_count=event_count, active_tab=tab or 'active', current_page=page, per_page=per_page, request=request, current_user_id=user_id, audit_labels=audit_labels)
 
 
 # --- Event CRUD ---
@@ -515,7 +550,7 @@ async def create_event(request: Request, gid: int, name: str = Form(...), time: 
     user_id = urow[0]
     _require_admin(user_id, gid)
     norm_time = _normalize_dt_local(time)
-    new_eid = EventRepo.create(gid, name, norm_time or time)
+    new_eid = EventRepo.create(gid, name, norm_time or time, created_by_user_id=user_id)
     # Create event notifications from group defaults
     EventNotificationRepo.create_from_group_defaults(new_eid, gid)
     # Personal notifications will be created when responsible person is assigned
@@ -540,12 +575,12 @@ async def create_events_multiple(request: Request, gid: int, items: str | None =
             if not t and not n:
                 continue
             if t and n:
-                eid = EventRepo.create(gid, n, t)
+                eid = EventRepo.create(gid, n, t, created_by_user_id=user_id)
                 EventNotificationRepo.create_from_group_defaults(eid, gid)
                 # Personal notifications will be created when responsible person is assigned
                 created_any = True
             elif t:
-                eid = EventRepo.create(gid, f"Событие {t}", t)
+                eid = EventRepo.create(gid, f"Событие {t}", t, created_by_user_id=user_id)
                 EventNotificationRepo.create_from_group_defaults(eid, gid)
                 # Personal notifications will be created when responsible person is assigned
                 created_any = True
@@ -557,13 +592,13 @@ async def create_events_multiple(request: Request, gid: int, items: str | None =
                 continue
             if '|' in line:
                 time_part, name_part = line.split('|', 1)
-                eid = EventRepo.create(gid, name_part.strip(), _normalize_dt_local(time_part.strip()) or time_part.strip())
+                eid = EventRepo.create(gid, name_part.strip(), _normalize_dt_local(time_part.strip()) or time_part.strip(), created_by_user_id=user_id)
                 EventNotificationRepo.create_from_group_defaults(eid, gid)
                 # Personal notifications will be created when responsible person is assigned
                 created_any = True
             else:
                 t = _normalize_dt_local(line.strip()) or line.strip()
-                eid = EventRepo.create(gid, f"Событие {t}", t)
+                eid = EventRepo.create(gid, f"Событие {t}", t, created_by_user_id=user_id)
                 EventNotificationRepo.create_from_group_defaults(eid, gid)
                 # Personal notifications will be created when responsible person is assigned
                 created_any = True
@@ -577,9 +612,9 @@ async def update_event(request: Request, gid: int, eid: int, name: str | None = 
     user_id = urow[0]
     _require_admin(user_id, gid)
     if name is not None and name != "":
-        EventRepo.update_name(eid, name)
+        EventRepo.update_name(eid, name, updated_by_user_id=user_id)
     if time is not None and time != "":
-        EventRepo.update_time(eid, _normalize_dt_local(time) or time)
+        EventRepo.update_time(eid, _normalize_dt_local(time) or time, updated_by_user_id=user_id)
     if responsible_user_id is not None:
         # Get current responsible user before updating
         event = EventRepo.get_by_id(eid)
@@ -600,9 +635,9 @@ async def update_event_from_card(request: Request, gid: int, eid: int, name: str
     user_id = urow[0]
     _require_admin(user_id, gid)
     if name is not None and name != "":
-        EventRepo.update_name(eid, name)
+        EventRepo.update_name(eid, name, updated_by_user_id=user_id)
     if time is not None and time != "":
-        EventRepo.update_time(eid, _normalize_dt_local(time) or time)
+        EventRepo.update_time(eid, _normalize_dt_local(time) or time, updated_by_user_id=user_id)
     if responsible_user_id is not None:
         # Get current responsible user before updating
         event = EventRepo.get_by_id(eid)
@@ -975,7 +1010,40 @@ async def event_settings(request: Request, gid: int, eid: int):
     # Load event-specific role list to edit for one-time events as well
     event_roles = EventRoleRequirementRepo.list_for_event(eid)
 
-    return render('event_settings.html', group=group, event=event, members=member_options, event_notifications=event_notifications, personal_notifications=personal_notifications, event_notifications_sent=event_notifications_sent, personal_notifications_sent_map=personal_notifications_sent_map, role=role, responsible_name=responsible_name, event_time_display=event_time_display, current_user_telegram_id=current_user_telegram_id, current_user_display_name=current_user_display_name, _calculate_notification_time=_calculate_notification_time, request=request, template_info=template_info, template_row=template_row, template_roles=template_roles, event_roles=event_roles)
+    # Audit labels for this event
+    try:
+        c_uid, c_at, u_uid, u_at = EventRepo.get_audit(eid)
+        def _label_for(uid: int | None) -> str:
+            if not uid:
+                return '—'
+            dn = DisplayNameRepo.get_display_name(gid, uid)
+            if dn:
+                return dn
+            u = UserRepo.get_by_id(uid)
+            if u and u[2]:
+                return f"@{u[2]}"
+            return str(uid)
+        # Format dates into DD.MM.YYYY HH:MM:SS
+        def _fmt_dt_ru(dt_str: str | None) -> str:
+            if not dt_str:
+                return '—'
+            for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+                try:
+                    d = datetime.strptime(dt_str, fmt)
+                    return d.strftime("%d.%m.%Y %H:%M:%S")
+                except Exception:
+                    continue
+            return dt_str
+        audit_info = {
+            'created_by': _label_for(c_uid),
+            'created_at': _fmt_dt_ru(c_at),
+            'updated_by': _label_for(u_uid),
+            'updated_at': _fmt_dt_ru(u_at),
+        }
+    except Exception:
+        audit_info = {'created_by': '—', 'updated_by': '—', 'updated_at': '—'}
+
+    return render('event_settings.html', group=group, event=event, members=member_options, event_notifications=event_notifications, personal_notifications=personal_notifications, event_notifications_sent=event_notifications_sent, personal_notifications_sent_map=personal_notifications_sent_map, role=role, responsible_name=responsible_name, event_time_display=event_time_display, current_user_telegram_id=current_user_telegram_id, current_user_display_name=current_user_display_name, _calculate_notification_time=_calculate_notification_time, request=request, template_info=template_info, template_row=template_row, template_roles=template_roles, event_roles=event_roles, audit_info=audit_info)
 
 
 @app.post('/group/{gid}/events/{eid}/notifications/add')

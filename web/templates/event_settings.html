@@ -33,15 +33,28 @@
       <a class="link" href="/group/{{ group[0] }}{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">← К списку</a>
       <h2>{{ event[1] }}</h2>
       <div class="meta">{{ event_time_display }}</div>
+      {% if audit_info %}
+      <div class="meta" style="margin-top:6px; color:#9ca3af; font-size:12px;">
+        Создал: {{ audit_info.created_by }} в {{ audit_info.created_at }}
+        {% if audit_info.updated_by and audit_info.updated_by != '—' %}
+          <br>
+          Изменил: {{ audit_info.updated_by }} в {{ audit_info.updated_at }}
+        {% endif %}
+      </div>
+      {% endif %}
 
       <div id="toast" class="toast" style="display: none;"></div>
 
       <!-- Блок Ответственный убран. Используем только блок Роли. -->
 
       {% if role in ['admin', 'owner', 'superadmin'] %}
+      <h3>Роли</h3>
+      <hr style="margin: 16px 0; border-color: var(--border);">
       <div class="form-row" style="margin-top:12px; flex-direction: column; align-items: stretch; gap:8px;">
+        
         <div style="display:flex; align-items:center; justify-content: space-between;">
-          <label style="margin:0;">Роли</label>
+          
+          
           <form id="evt-roles-form" method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/roles/update{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">
             <label style="display:flex; align-items:center; gap:6px; font-weight: normal;">
               <input type="checkbox" name="allow_multi_roles_per_user" value="1" {% if (event[5] or 0) %}checked{% endif %}> Несколько ролей на человека
@@ -73,8 +86,9 @@
 
       <!-- Повторяемость (перенесено выше оповещений) -->
       {% if role in ['admin', 'owner', 'superadmin'] %}
-      <hr style="margin: 16px 0; border-color: var(--border);">
+      
       <h3>Повторяемость</h3>
+      <hr style="margin: 16px 0; border-color: var(--border);">
       <style>
         .kind-switch { display: inline-flex; align-items: center; gap: 10px; margin: 8px 0 12px 0; }
         .switch { position: relative; width: 56px; height: 28px; background: #374151; border-radius: 999px; cursor: pointer; transition: background .2s; }
@@ -283,9 +297,60 @@
           updateOccurrencesPreview();
         })();
       </script>
+      <script>
+        // Expose role row helpers globally
+        window.addRoleRow = function() {
+          const grid = document.getElementById('rolesGrid');
+          if (!grid) return;
+          // Remove empty message if present
+          const emptyMsg = Array.from(grid.children).find(n => n.textContent && n.textContent.includes('Нет ролей'));
+          if (emptyMsg) emptyMsg.remove();
+          // Decide target form id
+          const tplForm = document.getElementById('tpl-roles-form');
+          const evtForm = document.getElementById('evt-roles-form');
+          const targetFormId = tplForm ? 'tpl-roles-form' : (evtForm ? 'evt-roles-form' : null);
+          // Create input
+          const input = document.createElement('input');
+          input.type = 'text';
+          input.name = 'role_names';
+          input.style.width = '100%';
+          input.placeholder = 'Название роли';
+          if (targetFormId) input.setAttribute('form', targetFormId);
+          // Create delete button
+          const delBtn = document.createElement('button');
+          delBtn.type = 'button';
+          delBtn.className = 'btn';
+          delBtn.style.background = '#ef4444';
+          delBtn.style.padding = '4px 8px';
+          delBtn.textContent = '✕';
+          delBtn.onclick = function(){ window.removeRoleRow(delBtn); };
+          // Append
+          grid.appendChild(input);
+          grid.appendChild(delBtn);
+        };
+
+        window.removeRoleRow = function(btn) {
+          const grid = document.getElementById('rolesGrid');
+          if (!grid || !btn) return;
+          const input = btn.previousElementSibling;
+          if (input) {
+            grid.removeChild(input);
+            grid.removeChild(btn);
+          }
+          // If no inputs remain, show empty message
+          const anyInputs = grid.querySelectorAll('input[name="role_names"]').length > 0;
+          if (!anyInputs) {
+            const emptyMsg = document.createElement('div');
+            emptyMsg.style.cssText = 'grid-column: 1 / -1; color: #9ca3af; font-style: italic; padding: 8px 0;';
+            emptyMsg.textContent = 'Нет ролей. Нажмите "Добавить роль" чтобы создать.';
+            grid.appendChild(emptyMsg);
+          }
+        };
+      </script>
       {% endif %}
 
       <h3>Оповещения</h3>
+      <hr style="margin: 16px 0; border-color: var(--border);">
       <div class="tabs">
         {% if role in ['admin', 'owner', 'superadmin'] %}
           <button class="tab-btn {% if request.query_params.get('tab') != 'personal' %}active{% endif %}" onclick="switchTab('group')" id="group-tab">Групповые</button>
