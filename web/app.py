@@ -843,11 +843,65 @@ async def event_settings(request: Request, gid: int, eid: int):
     event = EventRepo.get_by_id(eid)
     member_rows = GroupRepo.list_group_members(gid)
     event_notifications = EventNotificationRepo.list_by_event(eid)
-    personal_notifications = PersonalEventNotificationRepo.list_by_user_and_event(user_id, eid)
+    # Personal notifications: show all for owners/superadmin; otherwise only current user's
+    try:
+        from config import SUPERADMIN_ID as CFG_SUPER
+    except Exception:
+        CFG_SUPER = None
+    try:
+        user_role = RoleRepo.get_user_role(user_id, gid)
+        is_superadmin = (urow[1] == CFG_SUPER) if CFG_SUPER else False
+        def _label_for(uid: int) -> tuple[str, int | None]:
+            dn = DisplayNameRepo.get_display_name(gid, uid)
+            tg_id = None
+            if dn:
+                u = UserRepo.get_by_id(uid)
+                tg_id = u[1] if u else None
+                return dn, tg_id
+            u = UserRepo.get_by_id(uid)
+            if u:
+                tg_id = u[1]
+                if u[2]:
+                    return f"@{u[2]}", tg_id
+            return str(uid), tg_id
+        if user_role in ['owner'] or is_superadmin:
+            # Include recipient id and label so template shows correct destination
+            personal_rows = PersonalEventNotificationRepo.list_all_for_event(eid)
+            personal_notifications = []
+            for (nid, uid, tb, tu, msg) in personal_rows:
+                label, tgid = _label_for(uid)
+                personal_notifications.append((nid, tb, tu, msg, uid, label, tgid))
+        else:
+            mine = PersonalEventNotificationRepo.list_by_user_and_event(user_id, eid)
+            # mine rows: (nid, tb, tu, msg)
+            personal_notifications = []
+            for (nid, tb, tu, msg) in mine:
+                label, tgid = _label_for(user_id)
+                personal_notifications.append((nid, tb, tu, msg, user_id, label, tgid))
+    except Exception:
+        personal_notifications = PersonalEventNotificationRepo.list_by_user_and_event(user_id, eid)
     
     # Get sent status for notifications
     event_notifications_sent = DispatchLogRepo.get_sent_status_for_event_notifications(eid)
-    personal_notifications_sent = DispatchLogRepo.get_sent_status_for_personal_notifications(eid, user_id)
+    # Build sent map per-notification for display: {(nid): is_sent}
+    # For admins/superadmin, compute per user; for regular user, compute for self only
+    personal_notifications_sent_map = {}
+    try:
+        is_superadmin = (urow[1] == CFG_SUPER) if CFG_SUPER else False
+        if user_role in ['owner'] or is_superadmin:
+            # Load all personal notifications with user_id to compute sent per row
+            all_personals = PersonalEventNotificationRepo.list_all_for_event(eid)
+            for nid, uid, tb, tu, msg in all_personals:
+                sent = DispatchLogRepo.was_sent('personal', user_id=uid, group_id=None, event_id=eid, time_before=tb, time_unit=tu)
+                personal_notifications_sent_map[nid] = sent
+        else:
+            # Only current user's
+            mine = PersonalEventNotificationRepo.list_by_user_and_event(user_id, eid)
+            for nid, tb, tu, msg in mine:
+                sent = DispatchLogRepo.was_sent('personal', user_id=user_id, group_id=None, event_id=eid, time_before=tb, time_unit=tu)
+                personal_notifications_sent_map[nid] = sent
+    except Exception:
+        personal_notifications_sent_map = {}
     
     # Create member options with display names (same as in group.html)
     member_name_map: dict[int, str] = {}
@@ -905,7 +959,7 @@ async def event_settings(request: Request, gid: int, eid: int):
     # Load event-specific role list to edit for one-time events as well
     event_roles = EventRoleRequirementRepo.list_for_event(eid)
 
-    return render('event_settings.html', group=group, event=event, members=member_options, event_notifications=event_notifications, personal_notifications=personal_notifications, event_notifications_sent=event_notifications_sent, personal_notifications_sent=personal_notifications_sent, role=role, responsible_name=responsible_name, event_time_display=event_time_display, current_user_telegram_id=current_user_telegram_id, current_user_display_name=current_user_display_name, _calculate_notification_time=_calculate_notification_time, request=request, template_info=template_info, template_row=template_row, template_roles=template_roles, event_roles=event_roles)
+    return render('event_settings.html', group=group, event=event, members=member_options, event_notifications=event_notifications, personal_notifications=personal_notifications, event_notifications_sent=event_notifications_sent, personal_notifications_sent_map=personal_notifications_sent_map, role=role, responsible_name=responsible_name, event_time_display=event_time_display, current_user_telegram_id=current_user_telegram_id, current_user_display_name=current_user_display_name, _calculate_notification_time=_calculate_notification_time, request=request, template_info=template_info, template_row=template_row, template_roles=template_roles, event_roles=event_roles)
 
 
 @app.post('/group/{gid}/events/{eid}/notifications/add')
@@ -1304,7 +1358,15 @@ async def delete_personal_event_notification(request: Request, gid: int, eid: in
     tg_id = request.query_params.get('tg_id')
     urow = _require_user(request)
     user_id = urow[0]
-    PersonalEventNotificationRepo.delete_notification(nid, user_id)
+    # Allow owner/superadmin to delete any personal notification
+    try:
+        user_role = RoleRepo.get_user_role(user_id, gid)
+        if user_role in ['owner'] or urow[1] == SUPERADMIN_ID:
+            PersonalEventNotificationRepo.admin_delete_notification(nid)
+        else:
+            PersonalEventNotificationRepo.delete_notification(nid, user_id)
+    except Exception:
+        PersonalEventNotificationRepo.delete_notification(nid, user_id)
     return RedirectResponse(f"/group/{gid}/events/{eid}/settings?ok=personal_notification_deleted&tab=personal&tg_id={tg_id}", status_code=303)
 
 @app.post('/group/{gid}/events/{eid}/delete')

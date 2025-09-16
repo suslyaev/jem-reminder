@@ -39,10 +39,7 @@ form { display: block; }
   text-decoration: line-through;
 }
 
-/* Hide delete button for sent notifications */
-.notification-sent .delete-btn {
-  display: none !important;
-}
+/* Previously скрывали удаление для отправленных; теперь разрешаем удалять */
 
 /* Switch container styles */
 .switch-container {

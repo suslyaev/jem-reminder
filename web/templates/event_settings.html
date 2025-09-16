@@ -287,11 +287,9 @@
                   <div class="subtitle" style="font-size: 0.8em; color: #9ca3af; margin-top: 2px;">
                     Текст: {{ message_text if message_text else '—' }}
                   </div>
-                  {% if not is_sent %}
-                    <form method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/notifications/{{ nid }}/delete{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="position: absolute; top: 8px; right: 8px;" class="delete-btn">
-                      <button type="submit" class="delete-btn">✕</button>
-                    </form>
-                  {% endif %}
+                  <form method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/notifications/{{ nid }}/delete{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="position: absolute; top: 8px; right: 8px;" class="delete-btn">
+                    <button type="submit" class="delete-btn">✕</button>
+                  </form>
                 </li>
               {% endfor %}
             </ul>
@@ -328,8 +326,9 @@
           <div class="empty">Пока нет личных оповещений</div>
         {% else %}
           <ul class="list">
-            {% for nid, time_before, time_unit, message_text in personal_notifications %}
-              {% set is_sent = personal_notifications_sent.get((time_before, time_unit), False) %}
+            {# personal_notifications carries (nid, time_before, time_unit, message_text, user_id, user_label, user_telegram_id) #}
+            {% for nid, time_before, time_unit, message_text, pn_uid, pn_label, pn_tgid in personal_notifications %}
+              {% set is_sent = personal_notifications_sent_map.get(nid, False) %}
               <li class="item {% if is_sent %}notification-sent{% endif %}">
                 <div class="title">
                   {% set unit_map = {
@@ -353,16 +352,14 @@
                   Когда: {{ _calculate_notification_time(event[2], time_before, time_unit) }}
                 </div>
                 <div class="subtitle" style="font-size: 0.8em; color: #9ca3af; margin-top: 2px;">
-                  Куда: {{ current_user_display_name }} (ID: {{ current_user_telegram_id }})
+                  Куда: {{ pn_label }} (TG: {{ pn_tgid if pn_tgid else '—' }})
                 </div>
                 <div class="subtitle" style="font-size: 0.8em; color: #9ca3af; margin-top: 2px;">
                   Текст: {{ message_text if message_text else '—' }}
                 </div>
-                {% if not is_sent %}
-                  <form method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/personal-notifications/{{ nid }}/delete{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="position: absolute; top: 8px; right: 8px;" class="delete-btn">
-                    <button type="submit" class="delete-btn">✕</button>
-                  </form>
-                {% endif %}
+                <form method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/personal-notifications/{{ nid }}/delete{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="position: absolute; top: 8px; right: 8px;" class="delete-btn">
+                  <button type="submit" class="delete-btn">✕</button>
+                </form>
               </li>
             {% endfor %}
           </ul>

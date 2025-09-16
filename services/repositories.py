@@ -617,9 +617,20 @@ class EventNotificationRepo:
     def delete_notification(notification_id: int) -> bool:
         with get_conn() as conn:
             cur = conn.cursor()
+            # Load event_id, time_before, time_unit to clear dispatch log
+            cur.execute("SELECT event_id, time_before, time_unit FROM event_notifications WHERE id = ?", (notification_id,))
+            row = cur.fetchone()
             cur.execute("DELETE FROM event_notifications WHERE id = ?", (notification_id,))
+            deleted = cur.rowcount > 0
+            if deleted and row:
+                eid, tb, tu = row
+                # Remove sent markers so re-added notifications won't appear as sent
+                cur.execute(
+                    "DELETE FROM notification_dispatch_log WHERE kind = 'event' AND event_id = ? AND time_before = ? AND time_unit = ?",
+                    (eid, tb, tu)
+                )
             conn.commit()
-            return cur.rowcount > 0
+            return deleted
 
     @staticmethod
     def delete_by_group(group_id: int):
@@ -796,6 +807,14 @@ class PersonalEventNotificationRepo:
             return cur.fetchall()
 
     @staticmethod
+    def list_all_for_event(event_id: int) -> List[Tuple]:
+        """Return all personal notifications for an event as (id, user_id, time_before, time_unit, message_text)."""
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT id, user_id, time_before, time_unit, message_text FROM personal_event_notifications WHERE event_id = ? ORDER BY time_before", (event_id,))
+            return cur.fetchall()
+
+    @staticmethod
     def add_notification(user_id: int, event_id: int, time_before: int, time_unit: str, message_text: Optional[str] = None) -> int:
         with get_conn() as conn:
             cur = conn.cursor()
@@ -816,9 +835,37 @@ class PersonalEventNotificationRepo:
         """Delete personal notification, ensuring user owns it."""
         with get_conn() as conn:
             cur = conn.cursor()
+            # Load event_id, tb, tu for dispatch cleanup
+            cur.execute("SELECT event_id, time_before, time_unit FROM personal_event_notifications WHERE id = ? AND user_id = ?", (notification_id, user_id))
+            row = cur.fetchone()
             cur.execute("DELETE FROM personal_event_notifications WHERE id = ? AND user_id = ?", (notification_id, user_id))
+            deleted = cur.rowcount > 0
+            if deleted and row:
+                eid, tb, tu = row
+                cur.execute(
+                    "DELETE FROM notification_dispatch_log WHERE kind = 'personal' AND user_id = ? AND event_id = ? AND time_before = ? AND time_unit = ?",
+                    (user_id, eid, tb, tu)
+                )
             conn.commit()
-            return cur.rowcount > 0
+            return deleted
+
+    @staticmethod
+    def admin_delete_notification(notification_id: int) -> bool:
+        """Delete personal notification without user ownership check (for admins/owners)."""
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT user_id, event_id, time_before, time_unit FROM personal_event_notifications WHERE id = ?", (notification_id,))
+            row = cur.fetchone()
+            cur.execute("DELETE FROM personal_event_notifications WHERE id = ?", (notification_id,))
+            deleted = cur.rowcount > 0
+            if deleted and row:
+                uid, eid, tb, tu = row
+                cur.execute(
+                    "DELETE FROM notification_dispatch_log WHERE kind = 'personal' AND user_id = ? AND event_id = ? AND time_before = ? AND time_unit = ?",
+                    (uid, eid, tb, tu)
+                )
+            conn.commit()
+            return deleted
 
     @staticmethod
     def delete_by_user_and_event(user_id: int, event_id: int) -> None:
