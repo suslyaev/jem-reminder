@@ -1128,8 +1128,23 @@ async def cb_role_unbook(callback: types.CallbackQuery):
     user_id = urow[0] if urow else None
     if not user_id:
         return await callback.answer("Нет пользователя", show_alert=False)
-    from services.repositories import EventRoleAssignmentRepo
-    if EventRoleAssignmentRepo.unassign(eid_i, role_name, user_id):
+    from services.repositories import EventRoleAssignmentRepo, RoleRepo
+    # Admins/owners can unassign any user; find current assignee for this role
+    try:
+        role = RoleRepo.get_user_role(user_id, gid_i)
+        is_admin = role in ['admin', 'owner', 'superadmin'] if role else False
+    except Exception:
+        is_admin = False
+    target_uid = user_id
+    if is_admin:
+        try:
+            for r, uid in EventRoleAssignmentRepo.list_for_event(eid_i):
+                if r == role_name:
+                    target_uid = uid
+                    break
+        except Exception:
+            pass
+    if EventRoleAssignmentRepo.unassign(eid_i, role_name, target_uid):
         await refresh_role_keyboard(callback.message, gid_i, eid_i)
     else:
         await callback.answer("Нельзя снять чужую бронь", show_alert=False)

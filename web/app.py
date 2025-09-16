@@ -421,6 +421,24 @@ async def group_view(request: Request, gid: int, tab: str = None, page: int = 1,
         for rname, uid in role_assignments:
             if rname not in assignments_map:
                 assignments_map[rname] = uid
+        # Build label for assigned users (display name -> username -> telegram_id)
+        def _user_label(uid: int | None) -> str:
+            if not uid:
+                return ''
+            dn = DisplayNameRepo.get_display_name(gid, uid)
+            if dn:
+                return dn
+            u = UserRepo.get_by_id(uid)
+            if u:
+                _iid, _tid, _uname, _phone, _first, _last = u
+                if _uname:
+                    return f"@{_uname}"
+                if _first or _last:
+                    return f"{(_first or '').strip()} {(_last or '').strip()}".strip()
+                if _tid:
+                    return str(_tid)
+            return str(uid)
+        assignments_label_map = { r: _user_label(uid) for r, uid in assignments_map.items() }
         # Whether current user already has any role in this event
         current_user_has_role = any(uid == user_id for _, uid in role_assignments)
         # Read allow_multi_roles_per_user flag
@@ -443,6 +461,7 @@ async def group_view(request: Request, gid: int, tab: str = None, page: int = 1,
             'has_any_bookings': len(bookings_map.get(eid, [])) > 0,
             'role_requirements': role_requirements,
             'role_assignments': assignments_map,
+            'role_assignment_labels': assignments_label_map,
             'allow_multi_roles_per_user': allow_multi_roles_per_user,
             'current_user_has_role': 1 if current_user_has_role else 0,
         }
@@ -486,7 +505,7 @@ async def group_view(request: Request, gid: int, tab: str = None, page: int = 1,
     archived_events = archived_pagination['events']
     
     event_count = GroupRepo.count_group_events(gid)
-    return render('group.html', group=group, role=_role_label(role or 'participant'), is_admin=is_admin, active_events=active_events, archived_events=archived_events, active_pagination=active_pagination, archived_pagination=archived_pagination, booked_ids=booked_ids, responsible_ids=responsible_ids, display_name=display_name, bookings_map=bookings_map, member_options=member_options, event_count=event_count, active_tab=tab or 'active', current_page=page, per_page=per_page, request=request, current_user_id=user_id)
+    return render('group.html', group=group, role=_role_label(role or 'participant'), is_admin=is_admin, active_events=active_events, archived_events=archived_events, active_pagination=active_pagination, archived_pagination=archived_pagination, booked_ids=booked_ids, responsible_ids=responsible_ids, display_name=display_name, bookings_map=bookings_map, member_options=member_options, member_name_map=member_name_map, event_count=event_count, active_tab=tab or 'active', current_page=page, per_page=per_page, request=request, current_user_id=user_id)
 
 
 # --- Event CRUD ---
@@ -1560,15 +1579,29 @@ async def unbook_role(request: Request, gid: int, eid: int, role_name: str, tab:
     user_id = urow[0]
 
     ok = 'unbooked'
+    # Determine permissions
+    role = RoleRepo.get_user_role(user_id, gid)
+    is_admin = role in ['admin', 'owner', 'superadmin'] if role else False
+
+    # Determine which user to unassign
+    target_uid = user_id
+    if is_admin:
+        try:
+            assigned = {r: uid for r, uid in EventRoleAssignmentRepo.list_for_event(eid)}
+            if role_name in assigned:
+                target_uid = assigned[role_name]
+        except Exception:
+            pass
+
     # Attempt unassign
-    if not EventRoleAssignmentRepo.unassign(eid, role_name, user_id):
+    if not EventRoleAssignmentRepo.unassign(eid, role_name, target_uid):
         ok = 'booking_error'
     else:
-        # After unassign, if user has no roles left for this event, delete personal notifications
+        # After unassign, if target user has no roles left for this event, delete their personal notifications
         try:
             remaining = {r: uid for r, uid in EventRoleAssignmentRepo.list_for_event(eid)}
-            if all(uid != user_id for uid in remaining.values()):
-                PersonalEventNotificationRepo.delete_by_user_and_event(user_id, eid)
+            if all(uid != target_uid for uid in remaining.values()):
+                PersonalEventNotificationRepo.delete_by_user_and_event(target_uid, eid)
         except Exception:
             pass
 

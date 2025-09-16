@@ -323,12 +323,10 @@
                         {% set assigned_uid = e.role_assignments.get(rname) %}
                         {% if assigned_uid %}
                           <div class="autocomplete-container" style="flex: 1;">
-                            <input class="autocomplete-input" type="text" value="{{ member_options|selectattr('0','equalto', assigned_uid)|map(attribute='1')|first }}" disabled>
+                            <input class="autocomplete-input" type="text" value="{{ e.role_assignment_labels.get(rname, member_name_map.get(assigned_uid, 'ID: ' ~ assigned_uid)) }}" disabled>
                           </div>
-                          {% if assigned_uid == current_user_id %}
+                          {% if is_admin or assigned_uid == current_user_id %}
                             <button class="btn" type="button" onclick="unbookRole({{ e.id }}, '{{ rname }}')" style="background: var(--danger);">Отменить бронь</button>
-                          {% else %}
-                            <span style="color: var(--muted); font-size: 13px;">Занято</span>
                           {% endif %}
                         {% else %}
                           {% if member_options and member_options|length > 0 %}
@@ -442,7 +440,11 @@
                         <div style="min-width: 120px; color: var(--muted);">{{ rname }}</div>
                         {% set assigned_uid = e.role_assignments.get(rname) %}
                         <div class="autocomplete-container" style="flex: 1;">
-                          <input class="autocomplete-input" type="text" value="{% if assigned_uid %}{{ member_options|selectattr('0','equalto', assigned_uid)|map(attribute='1')|first }}{% else %}Свободно{% endif %}" disabled>
+                          {% if assigned_uid %}
+                            <input class="autocomplete-input" type="text" value="{{ e.role_assignment_labels.get(rname, member_name_map.get(assigned_uid, 'ID: ' ~ assigned_uid)) }}" disabled>
+                          {% else %}
+                            <input class="autocomplete-input" type="text" value="Свободно" disabled>
+                          {% endif %}
                         </div>
                       </div>
                     {% endfor %}
@@ -496,6 +498,7 @@
               const input = container.querySelector('.autocomplete-input');
               const hidden = container.querySelector('input[name="responsible_user_id"]');
               const dropdown = container.querySelector('.autocomplete-dropdown');
+              if (!input || !dropdown) return; // read-only rows or no dropdown
               const options = dropdown.querySelectorAll('.autocomplete-option');
               
               function filterOptions() {
