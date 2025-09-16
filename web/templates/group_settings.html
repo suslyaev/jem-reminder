@@ -90,7 +90,7 @@
                 <input type="text" name="display_name" placeholder="Отображаемое имя" value="{{ member_display_names.get(uid, '') }}" style="width:300px; margin-bottom:6px;" />
                 <button class="btn" type="submit" style="margin-left:8px;">Сохранить имя</button>
               </form>
-              {% if role in ['owner', 'superadmin'] %}
+              {% if role in ['owner', 'superadmin'] and member_role != 'superadmin' %}
               <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:6px;">
                 {% if member_role == 'owner' %}
                   {% if role == 'superadmin' %}
@@ -117,7 +117,7 @@
                   <div class="meta" style="color: var(--muted);">При назначении участника владельцем, текущий владелец становится админом</div>
                   
                 {% endif %}
-                {% if member_role != 'owner' %}
+                {% if member_role != 'owner' and member_role != 'superadmin' %}
                 <form method="post" action="/group/{{ group[0] }}/settings/member/{{ uid }}/remove{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="display:inline-block;">
                   <button class="btn" type="submit" style="background:#ef4444;">Удалить из группы</button>
                 </form>
