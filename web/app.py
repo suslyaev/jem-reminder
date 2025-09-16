@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Request, HTTPException, Form
+from typing import List
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
@@ -13,7 +14,7 @@ import hashlib
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from services.repositories import UserRepo, GroupRepo, EventRepo, RoleRepo, PersonalEventNotificationRepo, NotificationRepo, BookingRepo, DisplayNameRepo, EventNotificationRepo, DispatchLogRepo
+from services.repositories import UserRepo, GroupRepo, EventRepo, RoleRepo, PersonalEventNotificationRepo, NotificationRepo, BookingRepo, DisplayNameRepo, EventNotificationRepo, DispatchLogRepo, EventTemplateRepo, TemplateRoleRequirementRepo, TemplateGenerationRepo, TemplateGenerator, EventRoleRequirementRepo, EventRoleAssignmentRepo, get_conn
 
 # Import test configuration from .env
 import os
@@ -397,6 +398,41 @@ async def group_view(request: Request, gid: int, tab: str = None, page: int = 1,
         member_rows = filtered_member_rows
     
     member_options = [(mid, member_name_map[mid]) for mid, _ in member_rows]
+
+    # Build audit labels for events
+    audit_labels = {}
+    try:
+        for eid, _, _, _ in events:
+            c_uid, c_at, u_uid, u_at = EventRepo.get_audit(eid)
+            def _fmt_dt_ru(dt_str: str | None) -> str:
+                if not dt_str:
+                    return '—'
+                from datetime import datetime as _dt
+                for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+                    try:
+                        d = _dt.strptime(dt_str, fmt)
+                        return d.strftime("%d.%m.%Y %H:%M:%S")
+                    except Exception:
+                        continue
+                return dt_str
+            def label_for(uid: int | None) -> str:
+                if not uid:
+                    return '—'
+                dn = DisplayNameRepo.get_display_name(gid, uid)
+                if dn:
+                    return dn
+                u = UserRepo.get_by_id(uid)
+                if u and u[2]:
+                    return f"@{u[2]}"
+                return str(uid)
+            audit_labels[eid] = {
+                'created_by': label_for(c_uid),
+                'created_at': _fmt_dt_ru(c_at),
+                'updated_by': label_for(u_uid),
+                'updated_at': _fmt_dt_ru(u_at),
+            }
+    except Exception:
+        audit_labels = {}
     # Разделяем мероприятия на активные и архивные
     from datetime import datetime
     now = datetime.now()
@@ -406,6 +442,50 @@ async def group_view(request: Request, gid: int, tab: str = None, page: int = 1,
     
     for eid, name, time_str, resp_uid in events:
         disp, input_val = _format_time_display(time_str)
+        # Load roles and assignments for this event
+        try:
+            role_requirements = EventRoleRequirementRepo.list_for_event(eid)
+        except Exception:
+            role_requirements = []
+        try:
+            role_assignments = EventRoleAssignmentRepo.list_for_event(eid)
+        except Exception:
+            role_assignments = []
+        # Map role -> assigned user_id (first assignment if multiple present)
+        assignments_map = {}
+        for rname, uid in role_assignments:
+            if rname not in assignments_map:
+                assignments_map[rname] = uid
+        # Build label for assigned users (display name -> username -> telegram_id)
+        def _user_label(uid: int | None) -> str:
+            if not uid:
+                return ''
+            dn = DisplayNameRepo.get_display_name(gid, uid)
+            if dn:
+                return dn
+            u = UserRepo.get_by_id(uid)
+            if u:
+                _iid, _tid, _uname, _phone, _first, _last = u
+                if _uname:
+                    return f"@{_uname}"
+                if _first or _last:
+                    return f"{(_first or '').strip()} {(_last or '').strip()}".strip()
+                if _tid:
+                    return str(_tid)
+            return str(uid)
+        assignments_label_map = { r: _user_label(uid) for r, uid in assignments_map.items() }
+        # Whether current user already has any role in this event
+        current_user_has_role = any(uid == user_id for _, uid in role_assignments)
+        # Read allow_multi_roles_per_user flag
+        allow_multi_roles_per_user = 0
+        try:
+            with get_conn() as conn:
+                cur = conn.cursor()
+                cur.execute("SELECT allow_multi_roles_per_user FROM events WHERE id = ?", (eid,))
+                row = cur.fetchone()
+                allow_multi_roles_per_user = row[0] if row else 0
+        except Exception:
+            allow_multi_roles_per_user = 0
         event_data = {
             'id': eid,
             'name': name,
@@ -414,6 +494,11 @@ async def group_view(request: Request, gid: int, tab: str = None, page: int = 1,
             'responsible_user_id': resp_uid,
             'responsible_name': member_name_map.get(resp_uid) if resp_uid is not None else None,
             'has_any_bookings': len(bookings_map.get(eid, [])) > 0,
+            'role_requirements': role_requirements,
+            'role_assignments': assignments_map,
+            'role_assignment_labels': assignments_label_map,
+            'allow_multi_roles_per_user': allow_multi_roles_per_user,
+            'current_user_has_role': 1 if current_user_has_role else 0,
         }
         
         # Проверяем, прошло ли мероприятие
@@ -455,7 +540,7 @@ async def group_view(request: Request, gid: int, tab: str = None, page: int = 1,
     archived_events = archived_pagination['events']
     
     event_count = GroupRepo.count_group_events(gid)
-    return render('group.html', group=group, role=_role_label(role or 'participant'), is_admin=is_admin, active_events=active_events, archived_events=archived_events, active_pagination=active_pagination, archived_pagination=archived_pagination, booked_ids=booked_ids, responsible_ids=responsible_ids, display_name=display_name, bookings_map=bookings_map, member_options=member_options, event_count=event_count, active_tab=tab or 'active', current_page=page, per_page=per_page, request=request)
+    return render('group.html', group=group, role=_role_label(role or 'participant'), is_admin=is_admin, active_events=active_events, archived_events=archived_events, active_pagination=active_pagination, archived_pagination=archived_pagination, booked_ids=booked_ids, responsible_ids=responsible_ids, display_name=display_name, bookings_map=bookings_map, member_options=member_options, member_name_map=member_name_map, event_count=event_count, active_tab=tab or 'active', current_page=page, per_page=per_page, request=request, current_user_id=user_id, audit_labels=audit_labels)
 
 
 # --- Event CRUD ---
@@ -465,7 +550,7 @@ async def create_event(request: Request, gid: int, name: str = Form(...), time: 
     user_id = urow[0]
     _require_admin(user_id, gid)
     norm_time = _normalize_dt_local(time)
-    new_eid = EventRepo.create(gid, name, norm_time or time)
+    new_eid = EventRepo.create(gid, name, norm_time or time, created_by_user_id=user_id)
     # Create event notifications from group defaults
     EventNotificationRepo.create_from_group_defaults(new_eid, gid)
     # Personal notifications will be created when responsible person is assigned
@@ -490,12 +575,12 @@ async def create_events_multiple(request: Request, gid: int, items: str | None =
             if not t and not n:
                 continue
             if t and n:
-                eid = EventRepo.create(gid, n, t)
+                eid = EventRepo.create(gid, n, t, created_by_user_id=user_id)
                 EventNotificationRepo.create_from_group_defaults(eid, gid)
                 # Personal notifications will be created when responsible person is assigned
                 created_any = True
             elif t:
-                eid = EventRepo.create(gid, f"Событие {t}", t)
+                eid = EventRepo.create(gid, f"Событие {t}", t, created_by_user_id=user_id)
                 EventNotificationRepo.create_from_group_defaults(eid, gid)
                 # Personal notifications will be created when responsible person is assigned
                 created_any = True
@@ -507,13 +592,13 @@ async def create_events_multiple(request: Request, gid: int, items: str | None =
                 continue
             if '|' in line:
                 time_part, name_part = line.split('|', 1)
-                eid = EventRepo.create(gid, name_part.strip(), _normalize_dt_local(time_part.strip()) or time_part.strip())
+                eid = EventRepo.create(gid, name_part.strip(), _normalize_dt_local(time_part.strip()) or time_part.strip(), created_by_user_id=user_id)
                 EventNotificationRepo.create_from_group_defaults(eid, gid)
                 # Personal notifications will be created when responsible person is assigned
                 created_any = True
             else:
                 t = _normalize_dt_local(line.strip()) or line.strip()
-                eid = EventRepo.create(gid, f"Событие {t}", t)
+                eid = EventRepo.create(gid, f"Событие {t}", t, created_by_user_id=user_id)
                 EventNotificationRepo.create_from_group_defaults(eid, gid)
                 # Personal notifications will be created when responsible person is assigned
                 created_any = True
@@ -527,9 +612,9 @@ async def update_event(request: Request, gid: int, eid: int, name: str | None = 
     user_id = urow[0]
     _require_admin(user_id, gid)
     if name is not None and name != "":
-        EventRepo.update_name(eid, name)
+        EventRepo.update_name(eid, name, updated_by_user_id=user_id)
     if time is not None and time != "":
-        EventRepo.update_time(eid, _normalize_dt_local(time) or time)
+        EventRepo.update_time(eid, _normalize_dt_local(time) or time, updated_by_user_id=user_id)
     if responsible_user_id is not None:
         # Get current responsible user before updating
         event = EventRepo.get_by_id(eid)
@@ -550,9 +635,9 @@ async def update_event_from_card(request: Request, gid: int, eid: int, name: str
     user_id = urow[0]
     _require_admin(user_id, gid)
     if name is not None and name != "":
-        EventRepo.update_name(eid, name)
+        EventRepo.update_name(eid, name, updated_by_user_id=user_id)
     if time is not None and time != "":
-        EventRepo.update_time(eid, _normalize_dt_local(time) or time)
+        EventRepo.update_time(eid, _normalize_dt_local(time) or time, updated_by_user_id=user_id)
     if responsible_user_id is not None:
         # Get current responsible user before updating
         event = EventRepo.get_by_id(eid)
@@ -584,19 +669,15 @@ async def update_event_from_card(request: Request, gid: int, eid: int, name: str
 async def group_settings(request: Request, gid: int):
     urow = _require_user(request)
     user_id = urow[0]
-    # Allow all users to see settings, but restrict admin functions
-    try:
-        role = _require_admin(user_id, gid)
-    except:
-        # If not admin, get user role for display purposes
-        role = RoleRepo.get_user_role(user_id, gid)
+    # Allow all users to see settings; restrict admin functions by role
+    role = RoleRepo.get_user_role(user_id, gid)
     group = GroupRepo.get_by_id(gid)
-    notifications = NotificationRepo.list_notifications(gid)
+    notifications = NotificationRepo.list_notifications(gid) if role in ['admin', 'owner', 'superadmin'] else []
     # Load personal notification templates for this group
-    personal_notifications = NotificationRepo.list_personal_notifications(gid)
-    pending = RoleRepo.list_pending_admins(gid)
-    admins = GroupRepo.list_group_admins(gid)
-    members = GroupRepo.list_group_members_detailed(gid)
+    personal_notifications = NotificationRepo.list_personal_notifications(gid) if role in ['admin', 'owner', 'superadmin'] else []
+    pending = RoleRepo.list_pending_admins(gid) if role in ['admin', 'owner', 'superadmin'] else []
+    admins = GroupRepo.list_group_admins(gid) if role in ['admin', 'owner', 'superadmin'] else []
+    members = GroupRepo.list_group_members_detailed(gid) if role in ['admin', 'owner', 'superadmin'] else []
     current_display_name = DisplayNameRepo.get_display_name(gid, user_id)
     
     # Filter out superadmin if current user is not superadmin
@@ -805,18 +886,73 @@ async def event_settings(request: Request, gid: int, eid: int):
     
     # Check if user has access (admin or participant with booking)
     role = RoleRepo.get_user_role(user_id, gid)
-    if role not in ['admin', 'owner', 'superadmin'] and not BookingRepo.has_booking(user_id, eid):
+    # Allow: admins/owner/superadmin OR any group member OR anyone who has a booking on this event
+    if role is None and not BookingRepo.has_booking(user_id, eid):
         raise HTTPException(status_code=403, detail="Access denied")
     
     group = GroupRepo.get_by_id(gid)
     event = EventRepo.get_by_id(eid)
     member_rows = GroupRepo.list_group_members(gid)
     event_notifications = EventNotificationRepo.list_by_event(eid)
-    personal_notifications = PersonalEventNotificationRepo.list_by_user_and_event(user_id, eid)
+    # Personal notifications: show all for owners/superadmin; otherwise only current user's
+    try:
+        from config import SUPERADMIN_ID as CFG_SUPER
+    except Exception:
+        CFG_SUPER = None
+    try:
+        user_role = RoleRepo.get_user_role(user_id, gid)
+        is_superadmin = (urow[1] == CFG_SUPER) if CFG_SUPER else False
+        def _label_for(uid: int) -> tuple[str, int | None]:
+            dn = DisplayNameRepo.get_display_name(gid, uid)
+            tg_id = None
+            if dn:
+                u = UserRepo.get_by_id(uid)
+                tg_id = u[1] if u else None
+                return dn, tg_id
+            u = UserRepo.get_by_id(uid)
+            if u:
+                tg_id = u[1]
+                if u[2]:
+                    return f"@{u[2]}", tg_id
+            return str(uid), tg_id
+        if user_role in ['owner'] or is_superadmin:
+            # Include recipient id and label so template shows correct destination
+            personal_rows = PersonalEventNotificationRepo.list_all_for_event(eid)
+            personal_notifications = []
+            for (nid, uid, tb, tu, msg) in personal_rows:
+                label, tgid = _label_for(uid)
+                personal_notifications.append((nid, tb, tu, msg, uid, label, tgid))
+        else:
+            mine = PersonalEventNotificationRepo.list_by_user_and_event(user_id, eid)
+            # mine rows: (nid, tb, tu, msg)
+            personal_notifications = []
+            for (nid, tb, tu, msg) in mine:
+                label, tgid = _label_for(user_id)
+                personal_notifications.append((nid, tb, tu, msg, user_id, label, tgid))
+    except Exception:
+        personal_notifications = PersonalEventNotificationRepo.list_by_user_and_event(user_id, eid)
     
     # Get sent status for notifications
     event_notifications_sent = DispatchLogRepo.get_sent_status_for_event_notifications(eid)
-    personal_notifications_sent = DispatchLogRepo.get_sent_status_for_personal_notifications(eid, user_id)
+    # Build sent map per-notification for display: {(nid): is_sent}
+    # For admins/superadmin, compute per user; for regular user, compute for self only
+    personal_notifications_sent_map = {}
+    try:
+        is_superadmin = (urow[1] == CFG_SUPER) if CFG_SUPER else False
+        if user_role in ['owner'] or is_superadmin:
+            # Load all personal notifications with user_id to compute sent per row
+            all_personals = PersonalEventNotificationRepo.list_all_for_event(eid)
+            for nid, uid, tb, tu, msg in all_personals:
+                sent = DispatchLogRepo.was_sent('personal', user_id=uid, group_id=None, event_id=eid, time_before=tb, time_unit=tu)
+                personal_notifications_sent_map[nid] = sent
+        else:
+            # Only current user's
+            mine = PersonalEventNotificationRepo.list_by_user_and_event(user_id, eid)
+            for nid, tb, tu, msg in mine:
+                sent = DispatchLogRepo.was_sent('personal', user_id=user_id, group_id=None, event_id=eid, time_before=tb, time_unit=tu)
+                personal_notifications_sent_map[nid] = sent
+    except Exception:
+        personal_notifications_sent_map = {}
     
     # Create member options with display names (same as in group.html)
     member_name_map: dict[int, str] = {}
@@ -849,7 +985,65 @@ async def event_settings(request: Request, gid: int, eid: int):
     current_user_telegram_id = urow[1]  # urow[1] is telegram_id
     current_user_display_name = member_name_map.get(user_id, f"@{urow[2]}" if urow[2] else str(current_user_telegram_id))
     
-    return render('event_settings.html', group=group, event=event, members=member_options, event_notifications=event_notifications, personal_notifications=personal_notifications, event_notifications_sent=event_notifications_sent, personal_notifications_sent=personal_notifications_sent, role=role, responsible_name=responsible_name, event_time_display=event_time_display, current_user_telegram_id=current_user_telegram_id, current_user_display_name=current_user_display_name, _calculate_notification_time=_calculate_notification_time, request=request)
+    # Template info (if this event was generated from a template)
+    template_info = None
+    template_row = None
+    template_roles = []
+    try:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT template_id, occurrence_key FROM template_generated_events WHERE event_id = ?", (eid,))
+            row = cur.fetchone()
+            if row:
+                template_info = {'template_id': row[0], 'occurrence_key': row[1]}
+                # load template
+                template_row = EventTemplateRepo.get(row[0])
+                try:
+                    template_roles = TemplateRoleRequirementRepo.list(row[0])
+                except Exception:
+                    template_roles = []
+    except Exception:
+        template_info = None
+        template_row = None
+        template_roles = []
+
+    # Load event-specific role list to edit for one-time events as well
+    event_roles = EventRoleRequirementRepo.list_for_event(eid)
+
+    # Audit labels for this event
+    try:
+        c_uid, c_at, u_uid, u_at = EventRepo.get_audit(eid)
+        def _label_for(uid: int | None) -> str:
+            if not uid:
+                return '—'
+            dn = DisplayNameRepo.get_display_name(gid, uid)
+            if dn:
+                return dn
+            u = UserRepo.get_by_id(uid)
+            if u and u[2]:
+                return f"@{u[2]}"
+            return str(uid)
+        # Format dates into DD.MM.YYYY HH:MM:SS
+        def _fmt_dt_ru(dt_str: str | None) -> str:
+            if not dt_str:
+                return '—'
+            for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+                try:
+                    d = datetime.strptime(dt_str, fmt)
+                    return d.strftime("%d.%m.%Y %H:%M:%S")
+                except Exception:
+                    continue
+            return dt_str
+        audit_info = {
+            'created_by': _label_for(c_uid),
+            'created_at': _fmt_dt_ru(c_at),
+            'updated_by': _label_for(u_uid),
+            'updated_at': _fmt_dt_ru(u_at),
+        }
+    except Exception:
+        audit_info = {'created_by': '—', 'updated_by': '—', 'updated_at': '—'}
+
+    return render('event_settings.html', group=group, event=event, members=member_options, event_notifications=event_notifications, personal_notifications=personal_notifications, event_notifications_sent=event_notifications_sent, personal_notifications_sent_map=personal_notifications_sent_map, role=role, responsible_name=responsible_name, event_time_display=event_time_display, current_user_telegram_id=current_user_telegram_id, current_user_display_name=current_user_display_name, _calculate_notification_time=_calculate_notification_time, request=request, template_info=template_info, template_row=template_row, template_roles=template_roles, event_roles=event_roles, audit_info=audit_info)
 
 
 @app.post('/group/{gid}/events/{eid}/notifications/add')
@@ -914,6 +1108,186 @@ async def add_event_notification_text(request: Request, gid: int, eid: int, noti
     return RedirectResponse(f"/group/{gid}/events/{eid}/settings?ok=notification_added", status_code=303)
 
 
+@app.post('/group/{gid}/events/{eid}/convert-to-template')
+async def convert_event_to_template(request: Request, gid: int, eid: int, kind: str = Form('recurring'), repeat_every: int = Form(1), repeat_unit: str = Form('week'), planning_horizon_days: int = Form(60), allow_multi_roles_per_user: int = Form(0)):
+    urow = _require_user(request)
+    user_id = urow[0]
+    role = RoleRepo.get_user_role(user_id, gid)
+    if role not in ['admin', 'owner', 'superadmin']:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    event = EventRepo.get_by_id(eid)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    # event tuple now includes allow_multi_roles_per_user at index 5
+    _, name, time_str, group_id, _resp, _allow_multi = event
+
+    tz = 'Europe/Moscow'
+    # Map repeat_unit -> freq
+    unit_map = {'day': 'daily', 'week': 'weekly', 'month': 'monthly'}
+    freq = unit_map.get(repeat_unit, 'weekly') if kind != 'one_time' else None
+    interval = repeat_every if kind != 'one_time' else None
+    template_id = EventTemplateRepo.create(group_id, name, None, 'recurring' if kind != 'one_time' else 'one_time', time_str, tz, planning_horizon_days, allow_multi_roles_per_user, freq=freq, interval=interval, byweekday=None)
+
+    # Link current event as generated occurrence for its datetime to avoid duplicate creation
+    try:
+        TemplateGenerationRepo.mark_generated(template_id, time_str, eid)
+    except Exception:
+        pass
+
+    # copy current event role reqs into template defaults
+    try:
+        reqs = EventRoleRequirementRepo.list_for_event(eid)
+        for role_name, required in reqs:
+            TemplateRoleRequirementRepo.upsert(template_id, role_name, required)
+    except Exception:
+        pass
+
+    try:
+        TemplateGenerator.generate_for_template(template_id)
+    except Exception:
+        pass
+
+    return RedirectResponse(f"/group/{gid}/events/{eid}/settings?ok=template_created", status_code=303)
+
+
+from typing import Optional
+
+@app.post('/group/{gid}/events/{eid}/template/update')
+async def update_template_from_event(request: Request, gid: int, eid: int,
+                                     repeat_every: Optional[int] = Form(None),
+                                     repeat_unit: Optional[str] = Form(None),
+                                     planning_horizon_days: Optional[int] = Form(None),
+                                     allow_multi_roles_per_user: Optional[int] = Form(None),
+                                     regenerate: Optional[int] = Form(0),
+                                     role_names: Optional[List[str]] = Form(None),
+                                     roles_only: Optional[int] = Form(None)):
+    urow = _require_user(request)
+    user_id = urow[0]
+    role = RoleRepo.get_user_role(user_id, gid)
+    if role not in ['admin', 'owner', 'superadmin']:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    # get template by event
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT template_id FROM template_generated_events WHERE event_id = ?", (eid,))
+        row = cur.fetchone()
+        if not row:
+            return RedirectResponse(f"/group/{gid}/events/{eid}/settings?ok=method_error", status_code=303)
+        template_id = row[0]
+
+    # Update only provided basic fields (periodicity) - skip if roles_only
+    if not roles_only and (repeat_every is not None or repeat_unit is not None or planning_horizon_days is not None or allow_multi_roles_per_user is not None):
+        # Load current template to fill missing fields
+        tpl = EventTemplateRepo.get(template_id)
+        # tpl indices: 0 id,1 group_id,2 name,3 descr,4 kind,5 base_time,6 timezone,7 planning_horizon_days,8 allow_multi,9 freq,10 interval
+        current_horizon = tpl[7] if tpl else 60
+        current_allow_multi = tpl[8] if tpl else 0
+        current_freq = tpl[9] if tpl else 'weekly'
+        current_interval = tpl[10] if tpl else 1
+        unit_map = {'day': 'daily', 'week': 'weekly', 'month': 'monthly'}
+        new_freq = unit_map.get(repeat_unit, current_freq)
+        new_interval = repeat_every if repeat_every is not None else current_interval
+        new_horizon = planning_horizon_days if planning_horizon_days is not None else current_horizon
+        new_allow = (1 if allow_multi_roles_per_user else 0) if allow_multi_roles_per_user is not None else current_allow_multi
+        EventTemplateRepo.update_basic(template_id, planning_horizon_days=new_horizon, allow_multi_roles_per_user=new_allow, freq=new_freq, interval=new_interval)
+        # Set base_time to current event time so generation anchors from this event
+        try:
+            with get_conn() as conn:
+                cur = conn.cursor()
+                # Read this event time
+                cur.execute("SELECT time FROM events WHERE id = ?", (eid,))
+                row = cur.fetchone()
+                if row and row[0]:
+                    cur.execute("UPDATE event_templates SET base_time = ? WHERE id = ?", (row[0], template_id))
+                    conn.commit()
+        except Exception:
+            pass
+    elif allow_multi_roles_per_user is not None:
+        # Allow updating only the multi-roles flag (when saving roles without touching periodicity)
+        EventTemplateRepo.set_allow_multi_roles(template_id, allow_multi_roles_per_user)
+
+    # Replace template roles if provided (one name per line; quantity not used)
+    try:
+        if role_names is not None:
+            # role_names can be multi-value from repeated inputs
+            names_flat = []
+            if isinstance(role_names, list):
+                for n in role_names:
+                    if n and n.strip():
+                        names_flat.append(n.strip())
+            else:
+                names_flat = [x.strip() for x in str(role_names).split('\n') if x.strip()]
+            names = names_flat
+            items = [(n, 1) for n in names]
+            TemplateRoleRequirementRepo.replace_all(template_id, items)
+            # Also sync roles to this specific event so the group list reflects changes immediately
+            try:
+                EventRoleRequirementRepo.replace_for_event(eid, names)
+            except Exception:
+                pass
+        elif roles_only:
+            # If roles_only flag is set but no role_names provided, clear all roles
+            TemplateRoleRequirementRepo.replace_all(template_id, [])
+            # Also clear roles for this specific event
+            try:
+                EventRoleRequirementRepo.replace_for_event(eid, [])
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    if regenerate:
+        try:
+            # If this event has its own roles, make them the template defaults before generation
+            try:
+                evt_roles = EventRoleRequirementRepo.list_for_event(eid)
+                if evt_roles:
+                    TemplateRoleRequirementRepo.replace_all(template_id, [(rname, rreq) for rname, rreq in evt_roles])
+            except Exception:
+                pass
+            TemplateGenerator.generate_for_template(template_id)
+        except Exception:
+            pass
+
+    return RedirectResponse(f"/group/{gid}/events/{eid}/settings?ok=updated", status_code=303)
+
+
+@app.post('/group/{gid}/events/{eid}/roles/update')
+async def update_event_roles(request: Request, gid: int, eid: int, allow_multi_roles_per_user: int = Form(0), role_names: List[str] = Form(None)):
+    urow = _require_user(request)
+    user_id = urow[0]
+    role = RoleRepo.get_user_role(user_id, gid)
+    if role not in ['admin', 'owner', 'superadmin']:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    # Update event flag
+    try:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("UPDATE events SET allow_multi_roles_per_user = ? WHERE id = ?", (1 if allow_multi_roles_per_user else 0, eid))
+            conn.commit()
+    except Exception:
+        pass
+
+    # Replace event roles
+    try:
+        names = []
+        if isinstance(role_names, list):
+            for n in role_names:
+                if n and n.strip():
+                    names.append(n.strip())
+        else:
+            names = [x.strip() for x in str(role_names or '').split('\n') if x.strip()]
+        # Allow empty roles list - no forced "Ответственный"
+        EventRoleRequirementRepo.replace_for_event(eid, names)
+    except Exception:
+        pass
+
+    return RedirectResponse(f"/group/{gid}/events/{eid}/settings?ok=updated", status_code=303)
+
+
 @app.get('/group/{gid}/events/{eid}/notifications/add-absolute')
 async def add_event_notification_absolute_get(request: Request, gid: int, eid: int):
     tg_id = request.query_params.get('tg_id')
@@ -949,6 +1323,37 @@ async def add_event_notification_absolute(request: Request, gid: int, eid: int, 
     minutes = max(delta_seconds // 60, 1)
     EventNotificationRepo.add_notification(eid, minutes, 'minutes', message_text)
     return RedirectResponse(url=f"/group/{gid}/events/{eid}/settings?ok=notification_added&tg_id={tg_id}", status_code=303)
+
+
+@app.post('/group/{gid}/events/{eid}/notify-now')
+async def trigger_group_notification_now(request: Request, gid: int, eid: int):
+    """Create a group event notification scheduled for 'now' so bot will send it on the next tick."""
+    tg_id = request.query_params.get('tg_id')
+    urow = _require_user(request)
+    user_id = urow[0]
+    # Admins/owners/superadmins only
+    _require_admin(user_id, gid)
+    event = EventRepo.get_by_id(eid)
+    if not event:
+        return {"success": False, "error": "Мероприятие не найдено"}
+    # event[2] is time string "%Y-%m-%d %H:%M" (seconds optional handled elsewhere)
+    try:
+        try:
+            event_time = datetime.strptime(event[2], "%Y-%m-%d %H:%M")
+        except ValueError:
+            event_time = datetime.strptime(event[2], "%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return {"success": False, "error": "Некорректная дата мероприятия"}
+
+    now = datetime.now()
+    # Compute minutes_before so that notification time ~ now (next tick)
+    delta_seconds = int((event_time - now).total_seconds())
+    minutes_before = max(1, delta_seconds // 60)
+    try:
+        EventNotificationRepo.add_notification(eid, minutes_before, 'minutes', None)
+        return {"success": True}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 
 @app.post('/group/{gid}/events/{eid}/notifications/{nid}/delete')
@@ -1068,7 +1473,15 @@ async def delete_personal_event_notification(request: Request, gid: int, eid: in
     tg_id = request.query_params.get('tg_id')
     urow = _require_user(request)
     user_id = urow[0]
-    PersonalEventNotificationRepo.delete_notification(nid, user_id)
+    # Allow owner/superadmin to delete any personal notification
+    try:
+        user_role = RoleRepo.get_user_role(user_id, gid)
+        if user_role in ['owner'] or urow[1] == SUPERADMIN_ID:
+            PersonalEventNotificationRepo.admin_delete_notification(nid)
+        else:
+            PersonalEventNotificationRepo.delete_notification(nid, user_id)
+    except Exception:
+        PersonalEventNotificationRepo.delete_notification(nid, user_id)
     return RedirectResponse(f"/group/{gid}/events/{eid}/settings?ok=personal_notification_deleted&tab=personal&tg_id={tg_id}", status_code=303)
 
 @app.post('/group/{gid}/events/{eid}/delete')
@@ -1194,6 +1607,121 @@ async def unbook_event(request: Request, gid: int, eid: int, tab: str | None = F
     return RedirectResponse(url=f"/group/{gid}{param_string}", status_code=303)
 
 
+@app.post('/group/{gid}/events/{eid}/roles/{role_name}/book')
+async def book_role(request: Request, gid: int, eid: int, role_name: str, tab: str | None = Form(None), page: int | None = Form(None), per_page: int | None = Form(None), selected_user_id: int | None = Form(None)):
+    urow = _require_user(request)
+    user_id = urow[0]
+
+    # Determine target user (admins can assign others)
+    user_role = RoleRepo.get_user_role(user_id, gid)
+    is_admin = user_role in ['admin', 'owner', 'superadmin']
+    target_user_id = selected_user_id if (is_admin and selected_user_id) else user_id
+
+    # Validate role exists for this event
+    reqs = {r: req for r, req in EventRoleRequirementRepo.list_for_event(eid)}
+    if role_name not in reqs:
+        return RedirectResponse(f"/group/{gid}?ok=booking_error", status_code=303)
+
+    # Check if role already assigned
+    assigned = {r: uid for r, uid in EventRoleAssignmentRepo.list_for_event(eid)}
+    if role_name in assigned and assigned[role_name]:
+        return RedirectResponse(f"/group/{gid}?ok=booking_error", status_code=303)
+
+    # Check allow_multi_roles_per_user
+    allow_multi = 0
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT allow_multi_roles_per_user FROM events WHERE id = ?", (eid,))
+        row = cur.fetchone()
+        allow_multi = row[0] if row else 0
+
+    if not allow_multi:
+        # ensure user has no other role in this event
+        for r, uid in assigned.items():
+            if uid == target_user_id:
+                return RedirectResponse(f"/group/{gid}?ok=booking_error", status_code=303)
+
+    ok = 'event_booked'
+    # Check whether user had any role before assignment
+    had_any_role_before = any(uid == target_user_id for uid in assigned.values())
+    if EventRoleAssignmentRepo.assign(eid, role_name, target_user_id):
+        # Ensure personal notifications exist (idempotent) and booking recorded
+        try:
+            evt = EventRepo.get_by_id(eid)
+            group_id = evt[3] if evt else gid
+            PersonalEventNotificationRepo.create_from_personal_templates(eid, group_id, target_user_id)
+        except Exception:
+            pass
+        try:
+            BookingRepo.add_booking(target_user_id, eid)
+        except Exception:
+            pass
+        ok = 'event_booked'
+    else:
+        ok = 'booking_error'
+
+    params = []
+    if tab:
+        params.append(f"tab={tab}")
+    if page:
+        params.append(f"page={page}")
+    if per_page:
+        params.append(f"per_page={per_page}")
+    param_string = "&".join(params)
+    param_string = f"?ok={ok}&{param_string}" if param_string else f"?ok={ok}"
+    return RedirectResponse(f"/group/{gid}{param_string}", status_code=303)
+
+
+@app.post('/group/{gid}/events/{eid}/roles/{role_name}/unbook')
+async def unbook_role(request: Request, gid: int, eid: int, role_name: str, tab: str | None = Form(None), page: int | None = Form(None), per_page: int | None = Form(None)):
+    urow = _require_user(request)
+    user_id = urow[0]
+
+    ok = 'unbooked'
+    # Determine permissions
+    role = RoleRepo.get_user_role(user_id, gid)
+    is_admin = role in ['admin', 'owner', 'superadmin'] if role else False
+
+    # Determine which user to unassign
+    target_uid = user_id
+    if is_admin:
+        try:
+            assigned = {r: uid for r, uid in EventRoleAssignmentRepo.list_for_event(eid)}
+            if role_name in assigned:
+                target_uid = assigned[role_name]
+        except Exception:
+            pass
+
+    # Attempt unassign
+    if not EventRoleAssignmentRepo.unassign(eid, role_name, target_uid):
+        ok = 'booking_error'
+    else:
+        # After unassign, delete personal notifications only if user has no other roles in this event
+        try:
+            remaining = {r: uid for r, uid in EventRoleAssignmentRepo.list_for_event(eid)}
+            if all(uid != target_uid for uid in remaining.values()):
+                PersonalEventNotificationRepo.delete_by_user_and_event(target_uid, eid)
+                # Defensive: verify removal; if still present, attempt once more
+                try:
+                    leftovers = PersonalEventNotificationRepo.list_by_user_and_event(target_uid, eid)
+                    if leftovers:
+                        PersonalEventNotificationRepo.delete_by_user_and_event(target_uid, eid)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    params = []
+    if tab:
+        params.append(f"tab={tab}")
+    if page:
+        params.append(f"page={page}")
+    if per_page:
+        params.append(f"per_page={per_page}")
+    param_string = "&".join(params)
+    param_string = f"?ok={ok}&{param_string}" if param_string else f"?ok={ok}"
+    return RedirectResponse(f"/group/{gid}{param_string}", status_code=303)
+
 @app.post('/group/{gid}/display-name/set')
 async def set_display_name(request: Request, gid: int, display_name: str = Form(...)):
     urow = _require_user(request)
@@ -1209,6 +1737,137 @@ async def update_member_display_name(request: Request, gid: int, uid: int, displ
     # No additional encoding needed, FastAPI already handles UTF-8
     DisplayNameRepo.set_display_name(gid, uid, display_name)
     return RedirectResponse(f"/group/{gid}/settings?ok=member_name_saved", status_code=303)
+
+@app.post('/group/{gid}/settings/member/{uid}/role')
+async def update_member_role(request: Request, gid: int, uid: int, new_role: str = Form(...)):
+    urow = _require_user(request)
+    actor_id = urow[0]
+    # Only owner or superadmin can change roles
+    actor_role = RoleRepo.get_user_role(actor_id, gid)
+    from config import SUPERADMIN_ID
+    is_super = (urow[1] == SUPERADMIN_ID)
+    if actor_role not in ['owner'] and not is_super:
+        raise HTTPException(status_code=403, detail="Only owner or superadmin can change roles")
+
+    new_role = (new_role or '').strip().lower()
+    if new_role not in ['member', 'admin', 'owner']:
+        return RedirectResponse(f"/group/{gid}/settings?ok=member_role_error", status_code=303)
+
+    # Apply role change
+    try:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            # Helper: clear all group roles for user
+            cur.execute("DELETE FROM user_group_roles WHERE group_id = ? AND user_id = ?", (gid, uid))
+            if new_role == 'owner':
+                # Set as owner in groups table
+                # Find previous owner
+                cur.execute("SELECT owner_user_id FROM groups WHERE id = ?", (gid,))
+                row = cur.fetchone()
+                prev_owner = row[0] if row else None
+                cur.execute("UPDATE groups SET owner_user_id = ? WHERE id = ?", (uid, gid))
+                # Set new owner's role
+                cur.execute("INSERT OR IGNORE INTO user_group_roles (user_id, group_id, role, confirmed) VALUES (?,?,?,1)", (uid, gid, 'owner'))
+                # Demote previous owner to admin if exists and different
+                if prev_owner and prev_owner != uid:
+                    cur.execute("DELETE FROM user_group_roles WHERE group_id = ? AND user_id = ?", (gid, prev_owner))
+                    cur.execute("INSERT OR IGNORE INTO user_group_roles (user_id, group_id, role, confirmed) VALUES (?,?,?,1)", (prev_owner, gid, 'admin'))
+            else:
+                # Set member or admin
+                cur.execute("INSERT OR IGNORE INTO user_group_roles (user_id, group_id, role, confirmed) VALUES (?,?,?,1)", (uid, gid, new_role))
+            conn.commit()
+        ok = 'member_role_saved'
+    except Exception:
+        ok = 'member_role_error'
+    return RedirectResponse(f"/group/{gid}/settings?ok={ok}", status_code=303)
+
+@app.post('/group/{gid}/settings/member/{uid}/remove')
+async def remove_member(request: Request, gid: int, uid: int):
+    urow = _require_user(request)
+    actor_id = urow[0]
+    # Only owner or superadmin can remove
+    actor_role = RoleRepo.get_user_role(actor_id, gid)
+    from config import SUPERADMIN_ID
+    is_super = (urow[1] == SUPERADMIN_ID)
+    if actor_role not in ['owner'] and not is_super:
+        raise HTTPException(status_code=403, detail="Only owner or superadmin can remove members")
+
+    # Do not allow removing current owner
+    grp = GroupRepo.get_by_id(gid)
+    if grp and grp[3] == uid:  # owner_user_id
+        return RedirectResponse(f"/group/{gid}/settings?ok=member_remove_owner_error", status_code=303)
+
+    try:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("DELETE FROM user_group_roles WHERE group_id = ? AND user_id = ?", (gid, uid))
+            conn.commit()
+        ok = 'member_removed'
+    except Exception:
+        ok = 'member_remove_error'
+    return RedirectResponse(f"/group/{gid}/settings?ok={ok}", status_code=303)
+
+@app.post('/group/{gid}/settings/members/add')
+async def add_group_member(request: Request, gid: int, identifier_type: str = Form(...), identifier: str = Form(...)):
+    urow = _require_user(request)
+    user_id = urow[0]
+    # Owners, admins, or superadmins can add members
+    role = RoleRepo.get_user_role(user_id, gid)
+    from config import SUPERADMIN_ID
+    is_super = (urow[1] == SUPERADMIN_ID)
+    if role not in ['owner', 'admin'] and not is_super:
+        raise HTTPException(status_code=403, detail="Only owner, admin or superadmin can add members")
+
+    identifier_type = (identifier_type or '').strip().lower()
+    value = (identifier or '').strip()
+    target_user_id = None
+    ok_code = 'member_added'
+
+    try:
+        if identifier_type == 'id':
+            # Telegram ID
+            try:
+                tid = int(value)
+            except Exception:
+                return RedirectResponse(f"/group/{gid}/settings?ok=member_not_found", status_code=303)
+            u = UserRepo.get_by_telegram_id(tid)
+            if not u:
+                # Create minimal user record
+                UserRepo.upsert_user(tid, None, None, None, None)
+                u = UserRepo.get_by_telegram_id(tid)
+            target_user_id = u[0] if u else None
+        elif identifier_type == 'username':
+            uname = value.lstrip('@')
+            u = UserRepo.get_by_username(uname)
+            if u:
+                target_user_id = u[0]
+            else:
+                ok_code = 'member_not_found'
+        elif identifier_type == 'phone':
+            # Find by last 10 digits
+            normalized = ''.join(filter(str.isdigit, value))
+            if normalized.startswith('8'):
+                normalized = '7' + normalized[1:]
+            from services.repositories import get_conn
+            with get_conn() as conn:
+                cur = conn.cursor()
+                cur.execute("SELECT id FROM users WHERE REPLACE(REPLACE(REPLACE(COALESCE(phone,''),'+',''),'-',''),' ','') LIKE ? ORDER BY id DESC LIMIT 1", (f"%{normalized[-10:]}%",))
+                row = cur.fetchone()
+                if row:
+                    target_user_id = row[0]
+                else:
+                    ok_code = 'member_not_found'
+        else:
+            ok_code = 'member_not_found'
+
+        if target_user_id:
+            # Add as confirmed member
+            RoleRepo.add_role(target_user_id, gid, 'member', confirmed=True)
+            ok_code = 'member_added'
+    except Exception:
+        ok_code = 'member_error'
+
+    return RedirectResponse(f"/group/{gid}/settings?ok={ok_code}", status_code=303)
 
 @app.post('/group/{gid}/settings/member/{uid}/make-admin')
 async def make_member_admin(request: Request, gid: int, uid: int):

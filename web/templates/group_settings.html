@@ -45,7 +45,7 @@
 
 
       {% if role in ['admin', 'owner', 'superadmin'] %}
-        {% if pending %}
+        {% if pending and pending|length > 0 %}
           <h3>Ожидающие подтверждения админы</h3>
           <ul class="list">
             {% for pid, identifier, itype, created_by, created_at in pending %}
@@ -60,12 +60,14 @@
         {% endif %}
       {% endif %}
 
+      {% if role in ['admin', 'owner', 'superadmin'] %}
       <h3>Участники группы</h3>
+      <hr style="margin: 16px 0; border-color: var(--border);">
       {% if not members %}
         <div class="empty">Нет участников</div>
       {% else %}
         <ul class="list">
-          {% for uid, tid, username, phone, first_name, last_name, role in members %}
+          {% for uid, tid, username, phone, first_name, last_name, member_role in members %}
             <li class="item" style="position: relative;">
               <div class="title">
                 {% if first_name or last_name %}
@@ -75,7 +77,7 @@
                 {% else %}
                   ID: {{ tid }}
                 {% endif %}
-                <span class="meta">({{ role_map.get(role, role.upper()) }})</span>
+                <span class="meta">({{ role_map.get(member_role, member_role.upper()) }})</span>
               </div>
               {% set display_name = (first_name or '') + ' ' + (last_name or '') if first_name or last_name else ('@' + username if username else 'ID: ' + tid|string) %}
               <button class="message-btn" data-uid="{{ uid }}" data-display-name="{{ display_name }}" onclick="openMessageModalFromButton(this)" style="position: absolute; top: 8px; right: 8px; background: #3b82f6; color: white; border: none; border-radius: 4px; padding: 4px 8px; cursor: pointer; font-size: 12px;">✉️</button>
@@ -88,43 +90,66 @@
                 <input type="text" name="display_name" placeholder="Отображаемое имя" value="{{ member_display_names.get(uid, '') }}" style="width:300px; margin-bottom:6px;" />
                 <button class="btn" type="submit" style="margin-left:8px;">Сохранить имя</button>
               </form>
+              {% if role in ['owner', 'superadmin'] %}
               <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:6px;">
-                {% if role in ['admin', 'owner', 'superadmin'] %}
-                  {% if role == 'member' %}
-                    <form method="post" action="/group/{{ group[0] }}/settings/member/{{ uid }}/make-admin{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="display:inline-block;">
-                      <button class="btn" type="submit" style="background:#16a34a;">Сделать админом</button>
+                {% if member_role == 'owner' %}
+                  {% if role == 'superadmin' %}
+                    <form method="post" action="/group/{{ group[0] }}/settings/member/{{ uid }}/role{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="display:flex; gap:8px; align-items:center;">
+                      <select name="new_role" style="width:180px;">
+                        <option value="member" {% if member_role == 'member' %}selected{% endif %}>Участник</option>
+                        <option value="admin" {% if member_role == 'admin' %}selected{% endif %}>Админ</option>
+                        <option value="owner" {% if member_role == 'owner' %}selected{% endif %}>Владелец</option>
+                      </select>
+                      <button class="btn" type="submit">Сохранить роль</button>
                     </form>
-                  {% elif role in ['admin'] %}
-                    <form method="post" action="/group/{{ group[0] }}/settings/admins/{{ uid }}/remove{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="display:inline-block;">
-                      <button class="btn" type="submit" style="background:#ef4444;">Убрать из админов</button>
-                    </form>
+                  {% else %}
+                    <div class="meta" style="color: var(--muted);">Роль владельца может изменить только Суперадмин</div>
                   {% endif %}
+                {% else %}
+                  <form method="post" action="/group/{{ group[0] }}/settings/member/{{ uid }}/role{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="display:flex; gap:8px; align-items:center;">
+                    <select name="new_role" style="width:180px;">
+                      <option value="member" {% if member_role == 'member' %}selected{% endif %}>Участник</option>
+                      <option value="admin" {% if member_role == 'admin' %}selected{% endif %}>Админ</option>
+                      <option value="owner" {% if member_role == 'owner' %}selected{% endif %}>Владелец</option>
+                    </select>
+                    <button class="btn" type="submit">Сохранить роль</button>
+                  </form>
+                  <div class="meta" style="color: var(--muted);">При назначении участника владельцем, текущий владелец становится админом</div>
+                  
+                {% endif %}
+                {% if member_role != 'owner' %}
+                <form method="post" action="/group/{{ group[0] }}/settings/member/{{ uid }}/remove{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="display:inline-block;">
+                  <button class="btn" type="submit" style="background:#ef4444;">Удалить из группы</button>
+                </form>
                 {% endif %}
               </div>
+              {% endif %}
             </li>
           {% endfor %}
         </ul>
       {% endif %}
-
-      {% if role in ['admin', 'owner', 'superadmin'] %}
-        <h3>Добавить админа</h3>
-        <form method="post" action="/group/{{ group[0] }}/settings/admins/pending/add{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">
-          <select name="identifier_type" style="width:100%; margin-bottom:6px;">
-            <option value="id">Telegram ID</option>
-            <option value="username">username</option>
-            <option value="phone">телефон</option>
-          </select>
-          <input type="text" name="identifier" placeholder="Значение" required style="width:335px; margin-bottom:6px;" />
-          <button class="btn" type="submit">Создать</button>
-        </form>
       {% endif %}
 
+      {% if role in ['admin', 'owner', 'superadmin'] %}
+        <h3>Добавить участника</h3>
+        <form method="post" action="/group/{{ group[0] }}/settings/members/add{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">
+          <select name="identifier_type" style="width:100%; margin-bottom:6px;">
+            <option value="id">Telegram ID</option>
+            <option value="username">@username</option>
+            <option value="phone">Телефон</option>
+          </select>
+          <input type="text" name="identifier" placeholder="Значение" required style="width:335px; margin-bottom:6px;" />
+          <button class="btn" type="submit">Добавить</button>
+        </form>
+        <div class="meta" style="margin-top:6px;">Появится как <strong>Участник</strong>. Роль можно поменять в списке участников (в т.ч. передать владение).</div>
+      {% endif %}
+
+      {% if role in ['admin', 'owner', 'superadmin'] %}
       <h3>Оповещения</h3>
+      <hr style="margin: 16px 0; border-color: var(--border);">
       <div class="tabs" style="margin-bottom: 16px;">
         <button class="tab-btn active" onclick="switchTab('group')" id="group-tab">Групповые</button>
-        {% if role in ['admin', 'owner', 'superadmin'] %}
-          <button class="tab-btn" onclick="switchTab('personal')" id="personal-tab">Личные</button>
-        {% endif %}
+        <button class="tab-btn" onclick="switchTab('personal')" id="personal-tab">Личные</button>
       </div>
 
       <div id="group-notifications" class="tab-content">
@@ -178,6 +203,13 @@
           <div class="empty">Групповые оповещения доступны только админам</div>
         {% endif %}
       </div>
+      {% else %}
+      <h3>Ваше имя в группе</h3>
+      <form method="post" action="/group/{{ group[0] }}/display-name/set{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">
+        <input type="text" name="display_name" placeholder="Отображаемое имя" value="{{ current_display_name or '' }}" style="width:300px; margin-bottom:6px;" />
+        <button class="btn" type="submit">Сохранить</button>
+      </form>
+      {% endif %}
 
       <div id="personal-notifications" class="tab-content" style="display: none;">
         {% if not personal_notifications %}

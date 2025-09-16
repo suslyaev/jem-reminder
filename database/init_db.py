@@ -34,28 +34,51 @@ def apply_migrations(conn):
     """Применяет миграции к существующей базе данных"""
     print("Проверяем и применяем миграции...")
     
-    # Миграция 1: Добавляем колонку 'type' в notification_settings
-    if check_table_exists(conn, 'notification_settings'):
-        if not check_column_exists(conn, 'notification_settings', 'type'):
-            print("  - Добавляем колонку 'type' в таблицу notification_settings...")
-            cursor = conn.cursor()
-            cursor.execute("""
-                ALTER TABLE notification_settings 
-                ADD COLUMN type TEXT NOT NULL DEFAULT 'group'
-            """)
-            # Обновляем существующие записи
-            cursor.execute("""
-                UPDATE notification_settings 
-                SET type = 'group' 
-                WHERE type IS NULL OR type = ''
-            """)
-            print("  - Колонка 'type' добавлена успешно")
-        else:
-            print("  - Колонка 'type' уже существует в notification_settings")
-    
-    # Миграция 2: Включаем foreign keys
+    # Включаем foreign keys
     print("  - Включаем foreign keys...")
     conn.execute("PRAGMA foreign_keys = ON")
+
+    # Базовая миграция: убедиться, что колонка 'type' есть в notification_settings
+    if check_table_exists(conn, 'notification_settings') and not check_column_exists(conn, 'notification_settings', 'type'):
+        print("  - Добавляем колонку 'type' в таблицу notification_settings...")
+        cursor = conn.cursor()
+        cursor.execute("""
+            ALTER TABLE notification_settings 
+            ADD COLUMN type TEXT NOT NULL DEFAULT 'group'
+        """)
+        cursor.execute("""
+            UPDATE notification_settings 
+            SET type = 'group' 
+            WHERE type IS NULL OR type = ''
+        """)
+        print("  - Колонка 'type' добавлена успешно")
+    
+    # Применяем схему для создания недостающих таблиц и индексов
+    print("  - Создаем недостающие таблицы и индексы по schema.sql...")
+    with open(SCHEMA_PATH, 'r', encoding='utf-8') as f:
+        sql_script = f.read()
+        conn.executescript(sql_script)
+    print("  - Схема синхронизирована")
+
+    # Добавляем колонку allow_multi_roles_per_user в events, если отсутствует
+    if check_table_exists(conn, 'events') and not check_column_exists(conn, 'events', 'allow_multi_roles_per_user'):
+        print("  - Добавляем колонку 'allow_multi_roles_per_user' в таблицу events...")
+        cursor = conn.cursor()
+        cursor.execute("ALTER TABLE events ADD COLUMN allow_multi_roles_per_user INTEGER NOT NULL DEFAULT 0")
+        print("  - Колонка добавлена")
+
+    # Добавляем аудиторские поля для событий, если отсутствуют
+    if check_table_exists(conn, 'events'):
+        cursor = conn.cursor()
+        if not check_column_exists(conn, 'events', 'created_by_user_id'):
+            print("  - Добавляем колонку 'created_by_user_id' в таблицу events...")
+            cursor.execute("ALTER TABLE events ADD COLUMN created_by_user_id INTEGER")
+        if not check_column_exists(conn, 'events', 'updated_by_user_id'):
+            print("  - Добавляем колонку 'updated_by_user_id' в таблицу events...")
+            cursor.execute("ALTER TABLE events ADD COLUMN updated_by_user_id INTEGER")
+        if not check_column_exists(conn, 'events', 'updated_at'):
+            print("  - Добавляем колонку 'updated_at' в таблицу events...")
+            cursor.execute("ALTER TABLE events ADD COLUMN updated_at TEXT")
     
     print("Миграции применены успешно!")
 

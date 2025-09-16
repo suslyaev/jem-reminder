@@ -33,47 +33,332 @@
       <a class="link" href="/group/{{ group[0] }}{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">← К списку</a>
       <h2>{{ event[1] }}</h2>
       <div class="meta">{{ event_time_display }}</div>
+      {% if audit_info %}
+      <div class="meta" style="margin-top:6px; color:#9ca3af; font-size:12px;">
+        Создал: {{ audit_info.created_by }} в {{ audit_info.created_at }}
+        {% if audit_info.updated_by and audit_info.updated_by != '—' %}
+          <br>
+          Изменил: {{ audit_info.updated_by }} в {{ audit_info.updated_at }}
+        {% endif %}
+      </div>
+      {% endif %}
 
       <div id="toast" class="toast" style="display: none;"></div>
 
-      <h3>Ответственный</h3>
+      <!-- Блок Ответственный убран. Используем только блок Роли. -->
+
       {% if role in ['admin', 'owner', 'superadmin'] %}
-        <form method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/update{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">
-          <div class="form-row">
-            <div class="autocomplete-container">
-              <input class="autocomplete-input" type="text" placeholder="— ответственный —" 
-                     value="{% if event[4] %}{{ members|selectattr('0', 'equalto', event[4])|map(attribute='1')|first }}{% endif %}"
-                     data-user-id="{% if event[4] %}{{ event[4] }}{% else %}0{% endif %}"
-                     autocomplete="off">
-              <button type="button" class="autocomplete-clear" id="responsibleClear">✕</button>
-              <input type="hidden" name="responsible_user_id" value="{% if event[4] %}{{ event[4] }}{% else %}0{% endif %}">
-              <div class="autocomplete-dropdown" style="display: none;">
-                <div class="autocomplete-option" data-value="0">— ответственный —</div>
-              {% for uid, uname in members %}
-                  <div class="autocomplete-option" data-value="{{ uid }}">{{ uname if uname else 'ID: ' + uid|string }}</div>
-              {% endfor %}
-              </div>
+      <h3>Роли</h3>
+      <hr style="margin: 16px 0; border-color: var(--border);">
+      <div class="form-row" style="margin-top:12px; flex-direction: column; align-items: stretch; gap:8px;">
+        
+        <div style="display:flex; align-items:center; justify-content: space-between;">
+          
+          
+          <form id="evt-roles-form" method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/roles/update{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">
+            <label style="display:flex; align-items:center; gap:6px; font-weight: normal;">
+              <input type="checkbox" name="allow_multi_roles_per_user" value="1" {% if (event[5] or 0) %}checked{% endif %}> Несколько ролей на человека
+            </label>
+          </form>
+        </div>
+        <div id="rolesGrid" style="display:grid; grid-template-columns: 1fr 36px; gap:8px; align-items:center;">
+          <div style="color:#9ca3af;">Название роли</div>
+          <div></div>
+          {# Предпочитаем роли события; если пусто — предварительно заполняем ролями шаблона, но сохраняем в событие #}
+          {% set roles = event_roles if event_roles else (template_roles if template_roles else []) %}
+          {% if roles %}
+            {% for rname, rreq in roles %}
+              <input type="text" form="evt-roles-form" name="role_names" value="{{ rname }}" style="width:100%;">
+              <button type="button" class="btn" onclick="removeRoleRow(this)" style="background:#ef4444; padding:4px 8px;">✕</button>
+            {% endfor %}
+          {% else %}
+            <div style="grid-column: 1 / -1; color: #9ca3af; font-style: italic; padding: 8px 0;">Нет ролей. Нажмите "Добавить роль" чтобы создать.</div>
+          {% endif %}
+        </div>
+        <div>
+          <button type="button" class="btn" onclick="addRoleRow()">Добавить роль</button>
+        </div>
+        <div>
+          <div style="margin-top:8px;"><button class="btn" type="submit" form="evt-roles-form">Сохранить роли</button></div>
+        </div>
+      </div>
+      {% endif %}
+
+      <!-- Повторяемость (перенесено выше оповещений) -->
+      {% if role in ['admin', 'owner', 'superadmin'] %}
+      
+      <h3>Повторяемость</h3>
+      <hr style="margin: 16px 0; border-color: var(--border);">
+      <style>
+        .kind-switch { display: inline-flex; align-items: center; gap: 10px; margin: 8px 0 12px 0; }
+        .switch { position: relative; width: 56px; height: 28px; background: #374151; border-radius: 999px; cursor: pointer; transition: background .2s; }
+        .switch.on { background: #2563eb; }
+        .switch-knob { position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; background: #fff; border-radius: 50%; transition: left .2s; }
+        .switch.on .switch-knob { left: 31px; }
+      </style>
+
+      {% if template_row %}
+        {% set tpl = template_row %}
+        {% set tpl_kind = tpl[4] %}
+        {% set tpl_freq = tpl[9] or '' %}
+        {% set tpl_interval = tpl[10] or 1 %}
+        {% set tpl_horizon = tpl[7] or 60 %}
+        <div class="meta" style="margin-bottom:8px;">Шаблон: {{ 'Повторяющееся' if tpl_kind != 'one_time' else 'Разовое' }}; {% if tpl_kind != 'one_time' %}каждые {{ tpl_interval }} {% if tpl_freq == 'daily' %}дней{% elif tpl_freq == 'weekly' %}нед{% elif tpl_freq == 'monthly' %}мес{% else %}-{% endif %}; горизонт {{ tpl_horizon }} дн.{% endif %}</div>
+
+        <!-- Форма для периодичности -->
+        <form id="tpl-update-form" method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/template/update{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">
+          <div class="kind-switch">
+            <span>Разовое</span>
+            <div id="tplKindSwitch" class="switch {% if tpl_kind != 'one_time' %}on{% endif %}" tabindex="0" role="switch" aria-checked="{% if tpl_kind != 'one_time' %}true{% else %}false{% endif %}">
+              <div class="switch-knob"></div>
             </div>
+            <span>Повторяющееся</span>
+          </div>
+          <!-- Поля периодичности видимы только если включено Повторяющееся -->
+          <div id="tplPeriodicity" class="form-row" style="margin-top:8px;" data-initial-hidden="{% if tpl_kind == 'one_time' %}1{% else %}0{% endif %}">
+            <label>Повторять каждый:</label>
+            <input type="number" name="repeat_every" value="{{ tpl_interval }}" min="1" style="width: 80px;" form="tpl-update-form">
+            <select name="repeat_unit" form="tpl-update-form">
+              <option value="day" {% if tpl_freq == 'daily' %}selected{% endif %}>день</option>
+              <option value="week" {% if tpl_freq == 'weekly' %}selected{% endif %}>неделю</option>
+              <option value="month" {% if tpl_freq == 'monthly' %}selected{% endif %}>месяц</option>
+            </select>
+            <label>Горизонт (дней):</label>
+            <input type="number" name="planning_horizon_days" value="{{ tpl_horizon }}" min="7" style="width: 100px;" form="tpl-update-form">
+          </div>
+          
+          <div class="form-row" style="margin-top:8px; gap:8px;">
+            <button class="btn" type="submit">Сохранить периодичность</button>
+            <label style="display:flex; align-items:center; gap:6px;">
+              <input type="checkbox" name="regenerate" value="1" form="tpl-update-form"> Перегенерировать будущие
+            </label>
+          </div>
+        </form>
+        <div id="occurrencePreview" class="meta" style="margin-top:8px; color:#9ca3af;"></div>
+        
+        {# Роли шаблона редактируются отдельно при необходимости. Здесь роли редактируются на уровне события. #}
+      {% else %}
+        <!-- Нет шаблона: форма конвертации, по умолчанию Разовое -->
+        <form id="tpl-convert-form" method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/convert-to-template{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="margin-top: 8px;">
+          <input type="hidden" name="kind" value="one_time">
+          <div class="kind-switch">
+            <span>Разовое</span>
+            <div id="newKindSwitch" class="switch" tabindex="0" role="switch" aria-checked="false">
+              <div class="switch-knob"></div>
+            </div>
+            <span>Повторяющееся</span>
+          </div>
+          <div id="newPeriodicity" class="form-row" style="margin-top:8px; display:none;">
+            <label>Повторять каждый:</label>
+            <input type="number" name="repeat_every" value="1" min="1" style="width: 80px;">
+            <select name="repeat_unit">
+              <option value="day">день</option>
+              <option value="week" selected>неделю</option>
+              <option value="month">месяц</option>
+            </select>
+            <label>Горизонт (дней):</label>
+            <input type="number" name="planning_horizon_days" value="60" min="7" style="width: 100px;">
+            <label style="display:flex; align-items:center; gap:6px;">
+              <input type="checkbox" name="allow_multi_roles_per_user" value="1"> Несколько ролей на человека
+            </label>
+          </div>
+          <div class="form-row" style="margin-top:8px;">
             <button class="btn" type="submit">Сохранить</button>
           </div>
         </form>
-      {% else %}
-        {% if event[4] %}
-          <div class="meta">Ответственный: {{ responsible_name or 'ID: ' + event[4]|string }}</div>
-        {% else %}
-          <form method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/book{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">
-            <button class="btn" type="submit">Забронировать</button>
-          </form>
-        {% endif %}
+        <div id="occurrencePreview" class="meta" style="margin-top:8px; color:#9ca3af;"></div>
+      {% endif %}
+      <script>
+        (function(){
+          const switchEl = document.getElementById('newKindSwitch');
+          const periodicity = document.getElementById('newPeriodicity');
+          const form = document.getElementById('tpl-convert-form');
+          if (switchEl && periodicity && form) {
+            const hiddenKind = form.querySelector('input[name="kind"]');
+            const toggle = () => {
+              const on = switchEl.classList.toggle('on');
+              switchEl.setAttribute('aria-checked', on ? 'true' : 'false');
+              periodicity.style.display = on ? 'flex' : 'none';
+              hiddenKind.value = on ? 'recurring' : 'one_time';
+              updateOccurrencesPreview();
+            };
+            switchEl.addEventListener('click', toggle);
+            switchEl.addEventListener('keydown', (e)=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); toggle(); }});
+          }
+
+          const tplSwitch = document.getElementById('tplKindSwitch');
+          const tplPeriod = document.getElementById('tplPeriodicity');
+          if (tplSwitch && tplPeriod) {
+            // Respect initial hidden state via data attribute to avoid inline CSS parsing issues
+            const initiallyHidden = tplPeriod.getAttribute('data-initial-hidden') === '1';
+            if (initiallyHidden) {
+              tplPeriod.style.display = 'none';
+            }
+            const toggle2 = () => {
+              const on = tplSwitch.classList.toggle('on');
+              tplSwitch.setAttribute('aria-checked', on ? 'true' : 'false');
+              tplPeriod.style.display = on ? 'flex' : 'none';
+              // Примечание: смена one_time/recurring через update сейчас не меняет kind,
+              // но скрытие полей соответствует UX-требованию. При необходимости можно
+              // добавить отдельный эндпоинт, меняющий kind у шаблона.
+              updateOccurrencesPreview();
+            };
+            tplSwitch.addEventListener('click', toggle2);
+            tplSwitch.addEventListener('keydown', (e)=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); toggle2(); }});
+          }
+
+          // --- Preview upcoming occurrences ---
+          function parseBaseDateTime(str) {
+            if (!str) return null;
+            try { return new Date(str.replace(' ', 'T')); } catch(e) { return null; }
+          }
+          function addByUnit(date, unit, amount) {
+            const d = new Date(date.getTime());
+            if (unit === 'day') d.setDate(d.getDate() + amount);
+            else if (unit === 'week') d.setDate(d.getDate() + amount * 7);
+            else if (unit === 'month') d.setMonth(d.getMonth() + amount);
+            return d;
+          }
+          function formatRu(dt) {
+            const pad = n => (n < 10 ? '0'+n : ''+n);
+            return `${pad(dt.getDate())}.${pad(dt.getMonth()+1)}.${dt.getFullYear()} ${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+          }
+          function getCtx() {
+            const inUpdate = !!document.getElementById('tpl-update-form');
+            const inConvert = !!document.getElementById('tpl-convert-form');
+            const baseStr = '{{ event[2] }}';
+            return {
+              base: parseBaseDateTime(baseStr),
+              recurring: () => {
+                if (inUpdate) return document.getElementById('tplKindSwitch')?.classList.contains('on');
+                if (inConvert) return document.getElementById('newKindSwitch')?.classList.contains('on');
+                return false;
+              },
+              values: () => {
+                let every = 1, unit = 'week', horizon = 60;
+                if (inUpdate) {
+                  const f = document.getElementById('tpl-update-form');
+                  if (f) {
+                    every = parseInt(f.querySelector('input[name="repeat_every"]').value || '1', 10);
+                    unit = f.querySelector('select[name="repeat_unit"]').value || 'week';
+                    horizon = parseInt(f.querySelector('input[name="planning_horizon_days"]').value || '60', 10);
+                  }
+                } else if (inConvert) {
+                  const f = document.getElementById('tpl-convert-form');
+                  if (f) {
+                    every = parseInt(f.querySelector('input[name="repeat_every"]').value || '1', 10);
+                    unit = f.querySelector('select[name="repeat_unit"]').value || 'week';
+                    horizon = parseInt(f.querySelector('input[name="planning_horizon_days"]').value || '60', 10);
+                  }
+                }
+                return { every: Math.max(1, every||1), unit, horizon: Math.max(1, horizon||1) };
+              }
+            };
+          }
+          function updateOccurrencesPreview() {
+            const box = document.getElementById('occurrencePreview');
+            if (!box) return;
+            const ctx = getCtx();
+            box.textContent = '';
+            if (!ctx.base || !ctx.recurring()) return;
+            const { every, unit, horizon } = ctx.values();
+            const end = new Date(ctx.base.getTime());
+            end.setDate(end.getDate() + horizon);
+            const result = [];
+            let cur = addByUnit(ctx.base, unit, every);
+            let guard = 0;
+            while (cur <= end && guard < 200 && result.length < 20) {
+              result.push(formatRu(cur));
+              cur = addByUnit(cur, unit, every);
+              guard++;
+            }
+            box.textContent = result.length ? ('Ориентировочно будут созданы: ' + result.join(', ')) : 'В горизонте не создаются дополнительные мероприятия.';
+          }
+          // Listen to changes
+          const upd = document.getElementById('tpl-update-form');
+          if (upd) {
+            upd.addEventListener('input', (e)=>{
+              if (['repeat_every','repeat_unit','planning_horizon_days'].includes(e.target.name)) updateOccurrencesPreview();
+            });
+            upd.addEventListener('change', (e)=>{
+              if (['repeat_every','repeat_unit','planning_horizon_days'].includes(e.target.name)) updateOccurrencesPreview();
+            });
+          }
+          const conv = document.getElementById('tpl-convert-form');
+          if (conv) {
+            conv.addEventListener('input', (e)=>{
+              if (['repeat_every','repeat_unit','planning_horizon_days'].includes(e.target.name)) updateOccurrencesPreview();
+            });
+            conv.addEventListener('change', (e)=>{
+              if (['repeat_every','repeat_unit','planning_horizon_days'].includes(e.target.name)) updateOccurrencesPreview();
+            });
+          }
+          // Initial render
+          updateOccurrencesPreview();
+        })();
+      </script>
+      <script>
+        // Expose role row helpers globally
+        window.addRoleRow = function() {
+          const grid = document.getElementById('rolesGrid');
+          if (!grid) return;
+          // Remove empty message if present
+          const emptyMsg = Array.from(grid.children).find(n => n.textContent && n.textContent.includes('Нет ролей'));
+          if (emptyMsg) emptyMsg.remove();
+          // Decide target form id
+          const tplForm = document.getElementById('tpl-roles-form');
+          const evtForm = document.getElementById('evt-roles-form');
+          const targetFormId = tplForm ? 'tpl-roles-form' : (evtForm ? 'evt-roles-form' : null);
+          // Create input
+          const input = document.createElement('input');
+          input.type = 'text';
+          input.name = 'role_names';
+          input.style.width = '100%';
+          input.placeholder = 'Название роли';
+          if (targetFormId) input.setAttribute('form', targetFormId);
+          // Create delete button
+          const delBtn = document.createElement('button');
+          delBtn.type = 'button';
+          delBtn.className = 'btn';
+          delBtn.style.background = '#ef4444';
+          delBtn.style.padding = '4px 8px';
+          delBtn.textContent = '✕';
+          delBtn.onclick = function(){ window.removeRoleRow(delBtn); };
+          // Append
+          grid.appendChild(input);
+          grid.appendChild(delBtn);
+        };
+
+        window.removeRoleRow = function(btn) {
+          const grid = document.getElementById('rolesGrid');
+          if (!grid || !btn) return;
+          const input = btn.previousElementSibling;
+          if (input) {
+            grid.removeChild(input);
+            grid.removeChild(btn);
+          }
+          // If no inputs remain, show empty message
+          const anyInputs = grid.querySelectorAll('input[name="role_names"]').length > 0;
+          if (!anyInputs) {
+            const emptyMsg = document.createElement('div');
+            emptyMsg.style.cssText = 'grid-column: 1 / -1; color: #9ca3af; font-style: italic; padding: 8px 0;';
+            emptyMsg.textContent = 'Нет ролей. Нажмите "Добавить роль" чтобы создать.';
+            grid.appendChild(emptyMsg);
+          }
+        };
+      </script>
       {% endif %}
 
       <h3>Оповещения</h3>
+      <hr style="margin: 16px 0; border-color: var(--border);">
       <div class="tabs">
         {% if role in ['admin', 'owner', 'superadmin'] %}
           <button class="tab-btn {% if request.query_params.get('tab') != 'personal' %}active{% endif %}" onclick="switchTab('group')" id="group-tab">Групповые</button>
         {% endif %}
         <button class="tab-btn {% if request.query_params.get('tab') == 'personal' or role not in ['admin', 'owner', 'superadmin'] %}active{% endif %}" onclick="switchTab('personal')" id="personal-tab">Личные</button>
       </div>
+
+      
 
       <div id="group-notifications" class="tab-content {% if request.query_params.get('tab') == 'personal' or role not in ['admin', 'owner', 'superadmin'] %}hidden{% endif %}">
         {% if role in ['admin', 'owner', 'superadmin'] %}
@@ -111,11 +396,9 @@
                   <div class="subtitle" style="font-size: 0.8em; color: #9ca3af; margin-top: 2px;">
                     Текст: {{ message_text if message_text else '—' }}
                   </div>
-                  {% if not is_sent %}
-                    <form method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/notifications/{{ nid }}/delete{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="position: absolute; top: 8px; right: 8px;" class="delete-btn">
-                      <button type="submit" class="delete-btn">✕</button>
-                    </form>
-                  {% endif %}
+                  <form method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/notifications/{{ nid }}/delete{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="position: absolute; top: 8px; right: 8px;" >
+                    <button type="submit" class="delete-btn">✕</button>
+                  </form>
                 </li>
               {% endfor %}
             </ul>
@@ -152,8 +435,9 @@
           <div class="empty">Пока нет личных оповещений</div>
         {% else %}
           <ul class="list">
-            {% for nid, time_before, time_unit, message_text in personal_notifications %}
-              {% set is_sent = personal_notifications_sent.get((time_before, time_unit), False) %}
+            {# personal_notifications carries (nid, time_before, time_unit, message_text, user_id, user_label, user_telegram_id) #}
+            {% for nid, time_before, time_unit, message_text, pn_uid, pn_label, pn_tgid in personal_notifications %}
+              {% set is_sent = personal_notifications_sent_map.get(nid, False) %}
               <li class="item {% if is_sent %}notification-sent{% endif %}">
                 <div class="title">
                   {% set unit_map = {
@@ -177,16 +461,14 @@
                   Когда: {{ _calculate_notification_time(event[2], time_before, time_unit) }}
                 </div>
                 <div class="subtitle" style="font-size: 0.8em; color: #9ca3af; margin-top: 2px;">
-                  Куда: {{ current_user_display_name }} (ID: {{ current_user_telegram_id }})
+                  Куда: {{ pn_label }} (TG: {{ pn_tgid if pn_tgid else '—' }})
                 </div>
                 <div class="subtitle" style="font-size: 0.8em; color: #9ca3af; margin-top: 2px;">
                   Текст: {{ message_text if message_text else '—' }}
                 </div>
-                {% if not is_sent %}
-                  <form method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/personal-notifications/{{ nid }}/delete{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="position: absolute; top: 8px; right: 8px;" class="delete-btn">
-                    <button type="submit" class="delete-btn">✕</button>
-                  </form>
-                {% endif %}
+                <form method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/personal-notifications/{{ nid }}/delete{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="position: absolute; top: 8px; right: 8px;" >
+                  <button type="submit" class="delete-btn">✕</button>
+                </form>
               </li>
             {% endfor %}
           </ul>

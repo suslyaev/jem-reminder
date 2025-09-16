@@ -169,3 +169,92 @@ CREATE TABLE IF NOT EXISTS user_display_names (
 );
 
 
+-- Event templates (one-time or recurring) for generating events ahead
+-- kind: 'one_time' | 'recurring'
+-- freq: 'daily' | 'weekly' | 'monthly' | 'yearly'
+CREATE TABLE IF NOT EXISTS event_templates (
+    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id                    INTEGER NOT NULL,
+    name                        TEXT NOT NULL,
+    description                 TEXT,
+    kind                        TEXT NOT NULL DEFAULT 'one_time',
+    base_time                   TEXT NOT NULL,        -- локальное базовое время (YYYY-MM-DD HH:MM) для one_time или старт для recurring
+    timezone                    TEXT NOT NULL DEFAULT 'Europe/Moscow',
+    planning_horizon_days       INTEGER NOT NULL DEFAULT 60,
+    allow_multi_roles_per_user  INTEGER NOT NULL DEFAULT 0,
+    -- RRULE-like fields for recurring
+    freq                        TEXT,                 -- NULL for one_time
+    interval                    INTEGER,              -- шаг (например, 1 неделя)
+    byweekday                   TEXT,                 -- CSV, напр. 'MO,TU' (для weekly/monthly)
+    bymonthday                  TEXT,                 -- CSV чисел дней месяца, напр. '1,15,-1'
+    bysetpos                    INTEGER,              -- позиция в месяце (1..4, -1)
+    until                       TEXT,                 -- конец повторений
+    count                       INTEGER,              -- ограничение по количеству
+    exceptions_json             TEXT,                 -- JSON со списком дат-исключений
+    created_at                  TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY(group_id) REFERENCES groups(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_event_templates_group ON event_templates(group_id);
+
+-- Default role requirements per template
+CREATE TABLE IF NOT EXISTS template_role_requirements (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    template_id INTEGER NOT NULL,
+    role_name   TEXT NOT NULL,
+    required    INTEGER NOT NULL DEFAULT 1,
+    FOREIGN KEY(template_id) REFERENCES event_templates(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_template_role_reqs_template ON template_role_requirements(template_id);
+
+-- Roles directory for a group
+CREATE TABLE IF NOT EXISTS group_roles (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id    INTEGER NOT NULL,
+    name        TEXT NOT NULL,
+    description TEXT,
+    is_active   INTEGER NOT NULL DEFAULT 1,
+    UNIQUE(group_id, name),
+    FOREIGN KEY(group_id) REFERENCES groups(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_group_roles_group ON group_roles(group_id);
+
+-- Role requirements for a concrete event (copied from template defaults on generation)
+CREATE TABLE IF NOT EXISTS event_role_requirements (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id  INTEGER NOT NULL,
+    role_name TEXT NOT NULL,
+    required  INTEGER NOT NULL DEFAULT 1,
+    UNIQUE(event_id, role_name),
+    FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_event_role_reqs_event ON event_role_requirements(event_id);
+
+-- Role assignments (bookings) for users per event
+CREATE TABLE IF NOT EXISTS event_role_assignments (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id  INTEGER NOT NULL,
+    role_name TEXT NOT NULL,
+    user_id   INTEGER NOT NULL,
+    created_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(event_id, role_name, user_id),
+    FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE CASCADE,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_event_role_assign_event ON event_role_assignments(event_id);
+
+-- Link generated events to templates to ensure idempotency
+CREATE TABLE IF NOT EXISTS template_generated_events (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    template_id   INTEGER NOT NULL,
+    occurrence_key TEXT NOT NULL, -- уникальный ключ генерации (например, точное время старта)
+    event_id      INTEGER NOT NULL,
+    UNIQUE(template_id, occurrence_key),
+    FOREIGN KEY(template_id) REFERENCES event_templates(id) ON DELETE CASCADE,
+    FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE CASCADE
+);
+
