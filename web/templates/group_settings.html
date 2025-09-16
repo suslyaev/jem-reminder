@@ -106,17 +106,18 @@
         </ul>
       {% endif %}
 
-      {% if role in ['admin', 'owner', 'superadmin'] %}
-        <h3>Добавить админа</h3>
-        <form method="post" action="/group/{{ group[0] }}/settings/admins/pending/add{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">
+      {% if role in ['owner', 'superadmin'] %}
+        <h3>Добавить участника</h3>
+        <form method="post" action="/group/{{ group[0] }}/settings/members/add{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">
           <select name="identifier_type" style="width:100%; margin-bottom:6px;">
             <option value="id">Telegram ID</option>
-            <option value="username">username</option>
-            <option value="phone">телефон</option>
+            <option value="username">@username</option>
+            <option value="phone">Телефон</option>
           </select>
           <input type="text" name="identifier" placeholder="Значение" required style="width:335px; margin-bottom:6px;" />
-          <button class="btn" type="submit">Создать</button>
+          <button class="btn" type="submit">Добавить</button>
         </form>
+        <div class="meta" style="margin-top:6px;">Появится как <strong>Участник</strong>. Роль можно поменять в списке участников (в т.ч. передать владение).</div>
       {% endif %}
 
       <h3>Оповещения</h3>

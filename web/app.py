@@ -1642,6 +1642,69 @@ async def update_member_display_name(request: Request, gid: int, uid: int, displ
     DisplayNameRepo.set_display_name(gid, uid, display_name)
     return RedirectResponse(f"/group/{gid}/settings?ok=member_name_saved", status_code=303)
 
+
+@app.post('/group/{gid}/settings/members/add')
+async def add_group_member(request: Request, gid: int, identifier_type: str = Form(...), identifier: str = Form(...)):
+    urow = _require_user(request)
+    user_id = urow[0]
+    # Only owner or superadmin can add members this way
+    role = RoleRepo.get_user_role(user_id, gid)
+    from config import SUPERADMIN_ID
+    is_super = (urow[1] == SUPERADMIN_ID)
+    if role not in ['owner'] and not is_super:
+        raise HTTPException(status_code=403, detail="Only owner or superadmin can add members")
+
+    identifier_type = (identifier_type or '').strip().lower()
+    value = (identifier or '').strip()
+    target_user_id = None
+    ok_code = 'member_added'
+
+    try:
+        if identifier_type == 'id':
+            # Telegram ID
+            try:
+                tid = int(value)
+            except Exception:
+                return RedirectResponse(f"/group/{gid}/settings?ok=member_not_found", status_code=303)
+            u = UserRepo.get_by_telegram_id(tid)
+            if not u:
+                # Create minimal user record
+                UserRepo.upsert_user(tid, None, None, None, None)
+                u = UserRepo.get_by_telegram_id(tid)
+            target_user_id = u[0] if u else None
+        elif identifier_type == 'username':
+            uname = value.lstrip('@')
+            u = UserRepo.get_by_username(uname)
+            if u:
+                target_user_id = u[0]
+            else:
+                ok_code = 'member_not_found'
+        elif identifier_type == 'phone':
+            # Find by last 10 digits
+            normalized = ''.join(filter(str.isdigit, value))
+            if normalized.startswith('8'):
+                normalized = '7' + normalized[1:]
+            from services.repositories import get_conn
+            with get_conn() as conn:
+                cur = conn.cursor()
+                cur.execute("SELECT id FROM users WHERE REPLACE(REPLACE(REPLACE(COALESCE(phone,''),'+',''),'-',''),' ','') LIKE ? ORDER BY id DESC LIMIT 1", (f"%{normalized[-10:]}%",))
+                row = cur.fetchone()
+                if row:
+                    target_user_id = row[0]
+                else:
+                    ok_code = 'member_not_found'
+        else:
+            ok_code = 'member_not_found'
+
+        if target_user_id:
+            # Add as confirmed member
+            RoleRepo.add_role(target_user_id, gid, 'member', confirmed=True)
+            ok_code = 'member_added'
+    except Exception:
+        ok_code = 'member_error'
+
+    return RedirectResponse(f"/group/{gid}/settings?ok={ok_code}", status_code=303)
+
 @app.post('/group/{gid}/settings/member/{uid}/make-admin')
 async def make_member_admin(request: Request, gid: int, uid: int):
     urow = _require_user(request)
