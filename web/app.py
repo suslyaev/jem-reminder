@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Request, HTTPException, Form
+from typing import List
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
@@ -13,7 +14,7 @@ import hashlib
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from services.repositories import UserRepo, GroupRepo, EventRepo, RoleRepo, PersonalEventNotificationRepo, NotificationRepo, BookingRepo, DisplayNameRepo, EventNotificationRepo, DispatchLogRepo
+from services.repositories import UserRepo, GroupRepo, EventRepo, RoleRepo, PersonalEventNotificationRepo, NotificationRepo, BookingRepo, DisplayNameRepo, EventNotificationRepo, DispatchLogRepo, EventTemplateRepo, TemplateRoleRequirementRepo, TemplateGenerationRepo, TemplateGenerator, EventRoleRequirementRepo, get_conn
 
 # Import test configuration from .env
 import os
@@ -849,7 +850,32 @@ async def event_settings(request: Request, gid: int, eid: int):
     current_user_telegram_id = urow[1]  # urow[1] is telegram_id
     current_user_display_name = member_name_map.get(user_id, f"@{urow[2]}" if urow[2] else str(current_user_telegram_id))
     
-    return render('event_settings.html', group=group, event=event, members=member_options, event_notifications=event_notifications, personal_notifications=personal_notifications, event_notifications_sent=event_notifications_sent, personal_notifications_sent=personal_notifications_sent, role=role, responsible_name=responsible_name, event_time_display=event_time_display, current_user_telegram_id=current_user_telegram_id, current_user_display_name=current_user_display_name, _calculate_notification_time=_calculate_notification_time, request=request)
+    # Template info (if this event was generated from a template)
+    template_info = None
+    template_row = None
+    template_roles = []
+    try:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT template_id, occurrence_key FROM template_generated_events WHERE event_id = ?", (eid,))
+            row = cur.fetchone()
+            if row:
+                template_info = {'template_id': row[0], 'occurrence_key': row[1]}
+                # load template
+                template_row = EventTemplateRepo.get(row[0])
+                try:
+                    template_roles = TemplateRoleRequirementRepo.list(row[0])
+                except Exception:
+                    template_roles = []
+    except Exception:
+        template_info = None
+        template_row = None
+        template_roles = []
+
+    # Load event-specific role list to edit for one-time events as well
+    event_roles = EventRoleRequirementRepo.list_for_event(eid)
+
+    return render('event_settings.html', group=group, event=event, members=member_options, event_notifications=event_notifications, personal_notifications=personal_notifications, event_notifications_sent=event_notifications_sent, personal_notifications_sent=personal_notifications_sent, role=role, responsible_name=responsible_name, event_time_display=event_time_display, current_user_telegram_id=current_user_telegram_id, current_user_display_name=current_user_display_name, _calculate_notification_time=_calculate_notification_time, request=request, template_info=template_info, template_row=template_row, template_roles=template_roles, event_roles=event_roles)
 
 
 @app.post('/group/{gid}/events/{eid}/notifications/add')
@@ -912,6 +938,141 @@ async def add_event_notification_text(request: Request, gid: int, eid: int, noti
     
     EventNotificationRepo.add_notification(eid, time_before, time_unit, message_text_tail)
     return RedirectResponse(f"/group/{gid}/events/{eid}/settings?ok=notification_added", status_code=303)
+
+
+@app.post('/group/{gid}/events/{eid}/convert-to-template')
+async def convert_event_to_template(request: Request, gid: int, eid: int, kind: str = Form('recurring'), repeat_every: int = Form(1), repeat_unit: str = Form('week'), planning_horizon_days: int = Form(60), allow_multi_roles_per_user: int = Form(0)):
+    urow = _require_user(request)
+    user_id = urow[0]
+    role = RoleRepo.get_user_role(user_id, gid)
+    if role not in ['admin', 'owner', 'superadmin']:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    event = EventRepo.get_by_id(eid)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    _, name, time_str, group_id, _ = event
+
+    tz = 'Europe/Moscow'
+    # Map repeat_unit -> freq
+    unit_map = {'day': 'daily', 'week': 'weekly', 'month': 'monthly'}
+    freq = unit_map.get(repeat_unit, 'weekly') if kind != 'one_time' else None
+    interval = repeat_every if kind != 'one_time' else None
+    template_id = EventTemplateRepo.create(group_id, name, None, 'recurring' if kind != 'one_time' else 'one_time', time_str, tz, planning_horizon_days, allow_multi_roles_per_user, freq=freq, interval=interval, byweekday=None)
+
+    # copy current event role reqs into template defaults
+    try:
+        reqs = EventRoleRequirementRepo.list_for_event(eid)
+        for role_name, required in reqs:
+            TemplateRoleRequirementRepo.upsert(template_id, role_name, required)
+    except Exception:
+        pass
+
+    try:
+        TemplateGenerator.generate_for_template(template_id)
+    except Exception:
+        pass
+
+    return RedirectResponse(f"/group/{gid}/events/{eid}/settings?ok=template_created", status_code=303)
+
+
+from typing import Optional
+
+@app.post('/group/{gid}/events/{eid}/template/update')
+async def update_template_from_event(request: Request, gid: int, eid: int,
+                                     repeat_every: Optional[int] = Form(None),
+                                     repeat_unit: Optional[str] = Form(None),
+                                     planning_horizon_days: Optional[int] = Form(None),
+                                     allow_multi_roles_per_user: Optional[int] = Form(None),
+                                     regenerate: Optional[int] = Form(0),
+                                     role_names: Optional[List[str]] = Form(None),
+                                     roles_only: Optional[int] = Form(None)):
+    urow = _require_user(request)
+    user_id = urow[0]
+    role = RoleRepo.get_user_role(user_id, gid)
+    if role not in ['admin', 'owner', 'superadmin']:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    # get template by event
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT template_id FROM template_generated_events WHERE event_id = ?", (eid,))
+        row = cur.fetchone()
+        if not row:
+            return RedirectResponse(f"/group/{gid}/events/{eid}/settings?ok=method_error", status_code=303)
+        template_id = row[0]
+
+    # Update only provided basic fields (periodicity) - skip if roles_only
+    if not roles_only and repeat_every is not None and repeat_unit is not None and planning_horizon_days is not None and allow_multi_roles_per_user is not None:
+        unit_map = {'day': 'daily', 'week': 'weekly', 'month': 'monthly'}
+        freq = unit_map.get(repeat_unit, 'weekly')
+        interval = repeat_every
+        EventTemplateRepo.update_basic(template_id, planning_horizon_days=planning_horizon_days, allow_multi_roles_per_user=allow_multi_roles_per_user, freq=freq, interval=interval)
+    elif allow_multi_roles_per_user is not None:
+        # Allow updating only the multi-roles flag (when saving roles without touching periodicity)
+        EventTemplateRepo.set_allow_multi_roles(template_id, allow_multi_roles_per_user)
+
+    # Replace template roles if provided (one name per line; quantity not used)
+    try:
+        if role_names is not None:
+            # role_names can be multi-value from repeated inputs
+            names_flat = []
+            if isinstance(role_names, list):
+                for n in role_names:
+                    if n and n.strip():
+                        names_flat.append(n.strip())
+            else:
+                names_flat = [x.strip() for x in str(role_names).split('\n') if x.strip()]
+            names = names_flat
+            items = [(n, 1) for n in names]
+            TemplateRoleRequirementRepo.replace_all(template_id, items)
+        elif roles_only:
+            # If roles_only flag is set but no role_names provided, clear all roles
+            TemplateRoleRequirementRepo.replace_all(template_id, [])
+    except Exception:
+        pass
+
+    if regenerate:
+        try:
+            TemplateGenerator.generate_for_template(template_id)
+        except Exception:
+            pass
+
+    return RedirectResponse(f"/group/{gid}/events/{eid}/settings?ok=updated", status_code=303)
+
+
+@app.post('/group/{gid}/events/{eid}/roles/update')
+async def update_event_roles(request: Request, gid: int, eid: int, allow_multi_roles_per_user: int = Form(0), role_names: List[str] = Form(None)):
+    urow = _require_user(request)
+    user_id = urow[0]
+    role = RoleRepo.get_user_role(user_id, gid)
+    if role not in ['admin', 'owner', 'superadmin']:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    # Update event flag
+    try:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("UPDATE events SET allow_multi_roles_per_user = ? WHERE id = ?", (1 if allow_multi_roles_per_user else 0, eid))
+            conn.commit()
+    except Exception:
+        pass
+
+    # Replace event roles
+    try:
+        names = []
+        if isinstance(role_names, list):
+            for n in role_names:
+                if n and n.strip():
+                    names.append(n.strip())
+        else:
+            names = [x.strip() for x in str(role_names or '').split('\n') if x.strip()]
+        # Allow empty roles list - no forced "Ответственный"
+        EventRoleRequirementRepo.replace_for_event(eid, names)
+    except Exception:
+        pass
+
+    return RedirectResponse(f"/group/{gid}/events/{eid}/settings?ok=updated", status_code=303)
 
 
 @app.get('/group/{gid}/events/{eid}/notifications/add-absolute')

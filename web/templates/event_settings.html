@@ -67,6 +67,223 @@
         {% endif %}
       {% endif %}
 
+      {% if role in ['admin', 'owner', 'superadmin'] %}
+      <div class="form-row" style="margin-top:12px; flex-direction: column; align-items: stretch; gap:8px;">
+        <div style="display:flex; align-items:center; justify-content: space-between;">
+          <label style="margin:0;">Роли</label>
+          <label style="display:flex; align-items:center; gap:6px; font-weight: normal;">
+            {% if template_row %}
+              <input type="checkbox" form="tpl-update-form" name="allow_multi_roles_per_user" value="1" {% if (template_row[7] or 0) %}checked{% endif %}> Несколько ролей на человека
+            {% else %}
+              <form id="evt-roles-form" method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/roles/update{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">
+                <input type="checkbox" name="allow_multi_roles_per_user" value="1" {% if (event[5] or 0) %}checked{% endif %}> Несколько ролей на человека
+              </form>
+            {% endif %}
+          </label>
+        </div>
+        <div id="rolesGrid" style="display:grid; grid-template-columns: 1fr 36px; gap:8px; align-items:center;">
+          <div style="color:#9ca3af;">Название роли</div>
+          <div></div>
+          {% if template_row %}
+            {% set roles = template_roles if template_roles else [] %}
+          {% else %}
+            {% set roles = event_roles if event_roles else [] %}
+          {% endif %}
+          {% if roles %}
+            {% for rname, rreq in roles %}
+              <input type="text" {% if template_row %}form="tpl-roles-form"{% else %}form="evt-roles-form"{% endif %} name="role_names" value="{{ rname }}" style="width:100%;">
+              <button type="button" class="btn" onclick="removeRoleRow(this)" style="background:#ef4444; padding:4px 8px;">✕</button>
+            {% endfor %}
+          {% else %}
+            <div style="grid-column: 1 / -1; color: #9ca3af; font-style: italic; padding: 8px 0;">Нет ролей. Нажмите "Добавить роль" чтобы создать.</div>
+          {% endif %}
+        </div>
+        <div>
+          <button type="button" class="btn" onclick="addRoleRow()">Добавить роль</button>
+        </div>
+        <div>
+          {% if template_row %}
+            <div style="margin-top:8px;"><button class="btn" type="submit" form="tpl-roles-form">Сохранить роли</button></div>
+          {% else %}
+            <div style="margin-top:8px;"><button class="btn" type="submit" form="evt-roles-form">Сохранить роли</button></div>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
+
+      <!-- Повторяемость (перенесено выше оповещений) -->
+      {% if role in ['admin', 'owner', 'superadmin'] %}
+      <hr style="margin: 16px 0; border-color: var(--border);">
+      <h3>Повторяемость</h3>
+      <style>
+        .kind-switch { display: inline-flex; align-items: center; gap: 10px; margin: 8px 0 12px 0; }
+        .switch { position: relative; width: 56px; height: 28px; background: #374151; border-radius: 999px; cursor: pointer; transition: background .2s; }
+        .switch.on { background: #2563eb; }
+        .switch-knob { position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; background: #fff; border-radius: 50%; transition: left .2s; }
+        .switch.on .switch-knob { left: 31px; }
+      </style>
+
+      {% if template_row %}
+        {% set tpl = template_row %}
+        {% set tpl_kind = tpl[4] %}
+        {% set tpl_freq = tpl[9] or '' %}
+        {% set tpl_interval = tpl[10] or 1 %}
+        {% set tpl_horizon = tpl[7] or 60 %}
+        <div class="meta" style="margin-bottom:8px;">Шаблон: {{ 'Повторяющееся' if tpl_kind != 'one_time' else 'Разовое' }}; {% if tpl_kind != 'one_time' %}каждые {{ tpl_interval }} {% if tpl_freq == 'daily' %}дней{% elif tpl_freq == 'weekly' %}нед{% elif tpl_freq == 'monthly' %}мес{% else %}-{% endif %}; горизонт {{ tpl_horizon }} дн.{% endif %}</div>
+
+        <!-- Форма для периодичности -->
+        <form id="tpl-update-form" method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/template/update{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">
+          <div class="kind-switch">
+            <span>Разовое</span>
+            <div id="tplKindSwitch" class="switch {% if tpl_kind != 'one_time' %}on{% endif %}" tabindex="0" role="switch" aria-checked="{% if tpl_kind != 'one_time' %}true{% else %}false{% endif %}">
+              <div class="switch-knob"></div>
+            </div>
+            <span>Повторяющееся</span>
+          </div>
+          <!-- Поля периодичности видимы только если включено Повторяющееся -->
+          <div id="tplPeriodicity" class="form-row" style="margin-top:8px; {% if tpl_kind == 'one_time' %}display:none;{% endif %}">
+            <label>Повторять каждый:</label>
+            <input type="number" name="repeat_every" value="{{ tpl_interval }}" min="1" style="width: 80px;" form="tpl-update-form">
+            <select name="repeat_unit" form="tpl-update-form">
+              <option value="day" {% if tpl_freq == 'daily' %}selected{% endif %}>день</option>
+              <option value="week" {% if tpl_freq == 'weekly' %}selected{% endif %}>неделю</option>
+              <option value="month" {% if tpl_freq == 'monthly' %}selected{% endif %}>месяц</option>
+            </select>
+            <label>Горизонт (дней):</label>
+            <input type="number" name="planning_horizon_days" value="{{ tpl_horizon }}" min="7" style="width: 100px;" form="tpl-update-form">
+          </div>
+          
+          <div class="form-row" style="margin-top:8px; gap:8px;">
+            <button class="btn" type="submit">Сохранить периодичность</button>
+            <label style="display:flex; align-items:center; gap:6px;">
+              <input type="checkbox" name="regenerate" value="1" form="tpl-update-form"> Перегенерировать будущие
+            </label>
+          </div>
+        </form>
+        
+        <!-- Отдельная форма для ролей -->
+        <form id="tpl-roles-form" method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/template/update{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">
+          <input type="hidden" name="roles_only" value="1">
+        </form>
+      {% else %}
+        <!-- Нет шаблона: форма конвертации, по умолчанию Разовое -->
+        <form id="tpl-convert-form" method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/convert-to-template{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="margin-top: 8px;">
+          <input type="hidden" name="kind" value="one_time">
+          <div class="kind-switch">
+            <span>Разовое</span>
+            <div id="newKindSwitch" class="switch" tabindex="0" role="switch" aria-checked="false">
+              <div class="switch-knob"></div>
+            </div>
+            <span>Повторяющееся</span>
+          </div>
+          <div id="newPeriodicity" class="form-row" style="margin-top:8px; display:none;">
+            <label>Повторять каждый:</label>
+            <input type="number" name="repeat_every" value="1" min="1" style="width: 80px;">
+            <select name="repeat_unit">
+              <option value="day">день</option>
+              <option value="week" selected>неделю</option>
+              <option value="month">месяц</option>
+            </select>
+            <label>Горизонт (дней):</label>
+            <input type="number" name="planning_horizon_days" value="60" min="7" style="width: 100px;">
+            <label style="display:flex; align-items:center; gap:6px;">
+              <input type="checkbox" name="allow_multi_roles_per_user" value="1"> Несколько ролей на человека
+            </label>
+          </div>
+          <div class="form-row" style="margin-top:8px;">
+            <button class="btn" type="submit">Сохранить</button>
+          </div>
+        </form>
+      {% endif %}
+      <script>
+        (function(){
+          const switchEl = document.getElementById('newKindSwitch');
+          const periodicity = document.getElementById('newPeriodicity');
+          const form = document.getElementById('tpl-convert-form');
+          if (switchEl && periodicity && form) {
+            const hiddenKind = form.querySelector('input[name="kind"]');
+            const toggle = () => {
+              const on = switchEl.classList.toggle('on');
+              switchEl.setAttribute('aria-checked', on ? 'true' : 'false');
+              periodicity.style.display = on ? 'flex' : 'none';
+              hiddenKind.value = on ? 'recurring' : 'one_time';
+            };
+            switchEl.addEventListener('click', toggle);
+            switchEl.addEventListener('keydown', (e)=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); toggle(); }});
+          }
+
+          const tplSwitch = document.getElementById('tplKindSwitch');
+          const tplPeriod = document.getElementById('tplPeriodicity');
+          if (tplSwitch && tplPeriod) {
+            const toggle2 = () => {
+              const on = tplSwitch.classList.toggle('on');
+              tplSwitch.setAttribute('aria-checked', on ? 'true' : 'false');
+              tplPeriod.style.display = on ? 'flex' : 'none';
+              // Примечание: смена one_time/recurring через update сейчас не меняет kind,
+              // но скрытие полей соответствует UX-требованию. При необходимости можно
+              // добавить отдельный эндпоинт, меняющий kind у шаблона.
+            };
+            tplSwitch.addEventListener('click', toggle2);
+            tplSwitch.addEventListener('keydown', (e)=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); toggle2(); }});
+          }
+
+          // Roles dynamic rows
+          window.addRoleRow = function() {
+            const grid = document.getElementById('rolesGrid');
+            if (!grid) return;
+            
+            // Убрать сообщение "Нет ролей" если оно есть
+            const emptyMsg = grid.querySelector('div[style*="grid-column: 1 / -1"]');
+            if (emptyMsg) {
+              grid.removeChild(emptyMsg);
+            }
+            
+            // Determine which form to bind inputs to
+            const tplRolesForm = document.getElementById('tpl-roles-form');
+            const evtForm = document.getElementById('evt-roles-form');
+            const targetFormId = tplRolesForm ? 'tpl-roles-form' : (evtForm ? 'evt-roles-form' : null);
+            const nameInput = document.createElement('input');
+            nameInput.type = 'text';
+            nameInput.name = 'role_names';
+            nameInput.style.width = '100%';
+            nameInput.placeholder = 'Название роли';
+            if (targetFormId) nameInput.setAttribute('form', targetFormId);
+
+            const delBtn = document.createElement('button');
+            delBtn.type = 'button';
+            delBtn.className = 'btn';
+            delBtn.style.background = '#ef4444';
+            delBtn.style.padding = '4px 8px';
+            delBtn.textContent = '✕';
+            delBtn.onclick = function(){ removeRoleRow(delBtn); };
+
+            grid.appendChild(nameInput);
+            grid.appendChild(delBtn);
+          }
+
+          window.removeRoleRow = function(btn) {
+            const grid = document.getElementById('rolesGrid');
+            if (!grid) return;
+            const cell = btn;
+            const nameInput = cell.previousElementSibling;
+            if (nameInput) {
+              grid.removeChild(nameInput);
+              grid.removeChild(cell);
+              
+              // Если больше нет ролей, показать сообщение
+              const remainingInputs = grid.querySelectorAll('input[name="role_names"]');
+              if (remainingInputs.length === 0) {
+                const emptyMsg = document.createElement('div');
+                emptyMsg.style.cssText = 'grid-column: 1 / -1; color: #9ca3af; font-style: italic; padding: 8px 0;';
+                emptyMsg.textContent = 'Нет ролей. Нажмите "Добавить роль" чтобы создать.';
+                grid.appendChild(emptyMsg);
+              }
+            }
+          }
+        })();
+      </script>
+      {% endif %}
+
       <h3>Оповещения</h3>
       <div class="tabs">
         {% if role in ['admin', 'owner', 'superadmin'] %}
@@ -74,6 +291,8 @@
         {% endif %}
         <button class="tab-btn {% if request.query_params.get('tab') == 'personal' or role not in ['admin', 'owner', 'superadmin'] %}active{% endif %}" onclick="switchTab('personal')" id="personal-tab">Личные</button>
       </div>
+
+      
 
       <div id="group-notifications" class="tab-content {% if request.query_params.get('tab') == 'personal' or role not in ['admin', 'owner', 'superadmin'] %}hidden{% endif %}">
         {% if role in ['admin', 'owner', 'superadmin'] %}

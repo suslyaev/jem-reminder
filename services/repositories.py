@@ -1102,3 +1102,325 @@ class DisplayNameRepo:
             conn.commit()
 
 
+# --- Templates & Roles repositories ---
+class EventTemplateRepo:
+    @staticmethod
+    def create(group_id: int, name: str, description: Optional[str], kind: str, base_time: str, timezone: str,
+               planning_horizon_days: int, allow_multi_roles_per_user: int,
+               freq: Optional[str] = None, interval: Optional[int] = None, byweekday: Optional[str] = None,
+               bymonthday: Optional[str] = None, bysetpos: Optional[int] = None, until: Optional[str] = None,
+               count: Optional[int] = None, exceptions_json: Optional[str] = None) -> int:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                INSERT INTO event_templates 
+                (group_id, name, description, kind, base_time, timezone, planning_horizon_days, allow_multi_roles_per_user,
+                 freq, interval, byweekday, bymonthday, bysetpos, until, count, exceptions_json)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (group_id, name, description, kind, base_time, timezone, planning_horizon_days, allow_multi_roles_per_user,
+                 freq, interval, byweekday, bymonthday, bysetpos, until, count, exceptions_json)
+            )
+            conn.commit()
+            return cur.lastrowid
+
+    @staticmethod
+    def list_by_group(group_id: int) -> List[Tuple]:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT id, name, kind, base_time, timezone, planning_horizon_days FROM event_templates WHERE group_id = ? ORDER BY id DESC", (group_id,))
+            return cur.fetchall()
+
+    @staticmethod
+    def get(template_id: int) -> Optional[Tuple]:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT * FROM event_templates WHERE id = ?", (template_id,))
+            return cur.fetchone()
+
+    @staticmethod
+    def update_basic(template_id: int, *, planning_horizon_days: int, allow_multi_roles_per_user: int,
+                     freq: Optional[str], interval: Optional[int]) -> None:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                UPDATE event_templates
+                SET planning_horizon_days = ?, allow_multi_roles_per_user = ?, freq = ?, interval = ?
+                WHERE id = ?
+                """,
+                (planning_horizon_days, allow_multi_roles_per_user, freq, interval, template_id)
+            )
+            conn.commit()
+
+    @staticmethod
+    def set_allow_multi_roles(template_id: int, allow_multi_roles_per_user: int) -> None:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "UPDATE event_templates SET allow_multi_roles_per_user = ? WHERE id = ?",
+                (1 if allow_multi_roles_per_user else 0, template_id)
+            )
+            conn.commit()
+
+
+class TemplateRoleRequirementRepo:
+    @staticmethod
+    def upsert(template_id: int, role_name: str, required: int) -> None:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT id FROM template_role_requirements WHERE template_id = ? AND role_name = ?", (template_id, role_name))
+            row = cur.fetchone()
+            if row:
+                cur.execute("UPDATE template_role_requirements SET required = ? WHERE id = ?", (required, row[0]))
+            else:
+                cur.execute("INSERT INTO template_role_requirements (template_id, role_name, required) VALUES (?,?,?)", (template_id, role_name, required))
+            conn.commit()
+
+    @staticmethod
+    def list(template_id: int) -> List[Tuple]:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT role_name, required FROM template_role_requirements WHERE template_id = ? ORDER BY role_name", (template_id,))
+            return cur.fetchall()
+
+    @staticmethod
+    def delete_all(template_id: int) -> None:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("DELETE FROM template_role_requirements WHERE template_id = ?", (template_id,))
+            conn.commit()
+
+    @staticmethod
+    def replace_all(template_id: int, items: List[Tuple[str, int]]) -> None:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("DELETE FROM template_role_requirements WHERE template_id = ?", (template_id,))
+            for role_name, required in items:
+                if role_name and required and required > 0:
+                    cur.execute("INSERT INTO template_role_requirements (template_id, role_name, required) VALUES (?,?,?)", (template_id, role_name.strip(), int(required)))
+            conn.commit()
+
+
+class EventRoleRequirementRepo:
+    @staticmethod
+    def set_for_event(event_id: int, role_name: str, required: int) -> None:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("INSERT INTO event_role_requirements (event_id, role_name, required) VALUES (?,?,?) ON CONFLICT(event_id, role_name) DO UPDATE SET required = excluded.required",
+                        (event_id, role_name, required))
+            conn.commit()
+
+    @staticmethod
+    def list_for_event(event_id: int) -> List[Tuple[str, int]]:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT role_name, required FROM event_role_requirements WHERE event_id = ? ORDER BY role_name", (event_id,))
+            return cur.fetchall()
+
+    @staticmethod
+    def replace_for_event(event_id: int, role_names: List[str]) -> None:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("DELETE FROM event_role_requirements WHERE event_id = ?", (event_id,))
+            for name in role_names:
+                if name and name.strip():
+                    cur.execute("INSERT INTO event_role_requirements (event_id, role_name, required) VALUES (?,?,1)", (event_id, name.strip()))
+            conn.commit()
+
+
+class EventRoleAssignmentRepo:
+    @staticmethod
+    def assign(event_id: int, role_name: str, user_id: int) -> bool:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            try:
+                cur.execute("INSERT INTO event_role_assignments (event_id, role_name, user_id) VALUES (?,?,?)", (event_id, role_name, user_id))
+                conn.commit()
+                return True
+            except Exception:
+                return False
+
+    @staticmethod
+    def unassign(event_id: int, role_name: str, user_id: int) -> bool:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("DELETE FROM event_role_assignments WHERE event_id = ? AND role_name = ? AND user_id = ?", (event_id, role_name, user_id))
+            conn.commit()
+            return cur.rowcount > 0
+
+    @staticmethod
+    def list_for_event(event_id: int) -> List[Tuple[str, int]]:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT role_name, user_id FROM event_role_assignments WHERE event_id = ? ORDER BY role_name", (event_id,))
+            return cur.fetchall()
+
+
+class TemplateGenerationRepo:
+    @staticmethod
+    def was_generated(template_id: int, occurrence_key: str) -> Optional[int]:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT event_id FROM template_generated_events WHERE template_id = ? AND occurrence_key = ?", (template_id, occurrence_key))
+            row = cur.fetchone()
+            return row[0] if row else None
+
+    @staticmethod
+    def mark_generated(template_id: int, occurrence_key: str, event_id: int) -> None:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("INSERT OR IGNORE INTO template_generated_events (template_id, occurrence_key, event_id) VALUES (?,?,?)", (template_id, occurrence_key, event_id))
+            conn.commit()
+
+
+class TemplateGenerator:
+    @staticmethod
+    def _parse_weekdays(s: Optional[str]) -> List[int]:
+        if not s:
+            return []
+        map_wd = {
+            'MO': 0, 'TU': 1, 'WE': 2, 'TH': 3, 'FR': 4, 'SA': 5, 'SU': 6
+        }
+        result: List[int] = []
+        for part in s.split(','):
+            part = part.strip().upper()
+            if part in map_wd:
+                result.append(map_wd[part])
+        return result
+
+    @staticmethod
+    def _daterange(start: datetime, end: datetime, step_days: int):
+        cur = start
+        while cur <= end:
+            yield cur
+            cur += timedelta(days=step_days)
+
+    @staticmethod
+    def generate_for_template(template_id: int) -> int:
+        """Generate events from template within its planning_horizon_days. Returns number of created events."""
+        from datetime import datetime
+        created = 0
+        tpl = EventTemplateRepo.get(template_id)
+        if not tpl:
+            return 0
+        (
+            _id, group_id, name, description, kind, base_time, timezone,
+            planning_horizon_days, allow_multi_roles_per_user, freq, interval,
+            byweekday, bymonthday, bysetpos, until, count, exceptions_json,
+            *_
+        ) = tpl
+
+        # Time window
+        now = datetime.now()
+        horizon_end = now + timedelta(days=int(planning_horizon_days or 60))
+
+        # Base start time
+        try:
+            base_dt = datetime.strptime(base_time, '%Y-%m-%d %H:%M')
+        except Exception:
+            try:
+                base_dt = datetime.fromisoformat(base_time.replace('Z', ''))
+            except Exception:
+                return 0
+
+        # Exceptions set (YYYY-MM-DD)
+        exc_dates = set()
+        if exceptions_json:
+            try:
+                import json
+                items = json.loads(exceptions_json)
+                for it in items:
+                    if isinstance(it, str):
+                        exc_dates.add(it)
+            except Exception:
+                pass
+
+        # Helper to create one occurrence
+        def ensure_occurrence(start_dt: datetime):
+            nonlocal created
+            if start_dt < now:
+                return
+            key = start_dt.strftime('%Y-%m-%d %H:%M')
+            if TemplateGenerationRepo.was_generated(template_id, key):
+                return
+            event_id = EventRepo.create(group_id, name, key)
+            # create default group notifications for the event
+            try:
+                EventNotificationRepo.create_from_group_defaults(event_id, group_id)
+            except Exception:
+                pass
+            # copy role requirements
+            for role_name, required in TemplateRoleRequirementRepo.list(template_id):
+                EventRoleRequirementRepo.set_for_event(event_id, role_name, required)
+            TemplateGenerationRepo.mark_generated(template_id, key, event_id)
+            created += 1
+
+        if kind == 'one_time' or not freq:
+            ensure_occurrence(base_dt)
+            return created
+
+        freq = (freq or '').lower()
+        interval = int(interval or 1)
+
+        if freq == 'daily':
+            start_date = max(now, base_dt)
+            for day_dt in TemplateGenerator._daterange(start_date, horizon_end, interval):
+                if day_dt.strftime('%Y-%m-%d') in exc_dates:
+                    continue
+                # keep base hour/minute
+                occ = day_dt.replace(hour=base_dt.hour, minute=base_dt.minute, second=0, microsecond=0)
+                ensure_occurrence(occ)
+
+        elif freq == 'weekly':
+            # Generate strictly from the first event date every N weeks, ignoring byweekday
+            cur_dt = base_dt
+            # if base in past, advance to the next occurrence >= now
+            if cur_dt < now:
+                delta_weeks = ( (now - cur_dt).days // 7 )
+                cur_dt = cur_dt + timedelta(weeks=delta_weeks)
+                while cur_dt < now:
+                    cur_dt += timedelta(weeks=interval)
+            while cur_dt <= horizon_end:
+                if cur_dt.strftime('%Y-%m-%d') not in exc_dates:
+                    ensure_occurrence(cur_dt.replace())
+                cur_dt += timedelta(weeks=interval)
+
+        elif freq == 'monthly':
+            # bymonthday like '1,15,-1'
+            days = []
+            if bymonthday:
+                for token in bymonthday.split(','):
+                    token = token.strip()
+                    try:
+                        days.append(int(token))
+                    except Exception:
+                        pass
+            if not days:
+                days = [base_dt.day]
+
+            cur = base_dt
+            while cur <= horizon_end:
+                y, m = cur.year, cur.month
+                from calendar import monthrange
+                last_day = monthrange(y, m)[1]
+                for d in days:
+                    if d < 0:
+                        day = last_day + 1 + d  # -1 => last day
+                    else:
+                        day = d
+                    if day < 1 or day > last_day:
+                        continue
+                    occ = cur.replace(day=day, hour=base_dt.hour, minute=base_dt.minute)
+                    if occ.strftime('%Y-%m-%d') in exc_dates:
+                        continue
+                    ensure_occurrence(occ)
+                # add interval months
+                nm = m + interval
+                y += (nm - 1) // 12
+                m = ((nm - 1) % 12) + 1
+                cur = cur.replace(year=y, month=m)
+
+        return created
+
