@@ -101,7 +101,7 @@
             <span>Повторяющееся</span>
           </div>
           <!-- Поля периодичности видимы только если включено Повторяющееся -->
-          <div id="tplPeriodicity" class="form-row" style="margin-top:8px; {% if tpl_kind == 'one_time' %}display:none;{% endif %}">
+          <div id="tplPeriodicity" class="form-row" style="margin-top:8px;" data-initial-hidden="{% if tpl_kind == 'one_time' %}1{% else %}0{% endif %}">
             <label>Повторять каждый:</label>
             <input type="number" name="repeat_every" value="{{ tpl_interval }}" min="1" style="width: 80px;" form="tpl-update-form">
             <select name="repeat_unit" form="tpl-update-form">
@@ -120,6 +120,7 @@
             </label>
           </div>
         </form>
+        <div id="occurrencePreview" class="meta" style="margin-top:8px; color:#9ca3af;"></div>
         
         {# Роли шаблона редактируются отдельно при необходимости. Здесь роли редактируются на уровне события. #}
       {% else %}
@@ -151,6 +152,7 @@
             <button class="btn" type="submit">Сохранить</button>
           </div>
         </form>
+        <div id="occurrencePreview" class="meta" style="margin-top:8px; color:#9ca3af;"></div>
       {% endif %}
       <script>
         (function(){
@@ -164,6 +166,7 @@
               switchEl.setAttribute('aria-checked', on ? 'true' : 'false');
               periodicity.style.display = on ? 'flex' : 'none';
               hiddenKind.value = on ? 'recurring' : 'one_time';
+              updateOccurrencesPreview();
             };
             switchEl.addEventListener('click', toggle);
             switchEl.addEventListener('keydown', (e)=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); toggle(); }});
@@ -172,6 +175,11 @@
           const tplSwitch = document.getElementById('tplKindSwitch');
           const tplPeriod = document.getElementById('tplPeriodicity');
           if (tplSwitch && tplPeriod) {
+            // Respect initial hidden state via data attribute to avoid inline CSS parsing issues
+            const initiallyHidden = tplPeriod.getAttribute('data-initial-hidden') === '1';
+            if (initiallyHidden) {
+              tplPeriod.style.display = 'none';
+            }
             const toggle2 = () => {
               const on = tplSwitch.classList.toggle('on');
               tplSwitch.setAttribute('aria-checked', on ? 'true' : 'false');
@@ -179,64 +187,100 @@
               // Примечание: смена one_time/recurring через update сейчас не меняет kind,
               // но скрытие полей соответствует UX-требованию. При необходимости можно
               // добавить отдельный эндпоинт, меняющий kind у шаблона.
+              updateOccurrencesPreview();
             };
             tplSwitch.addEventListener('click', toggle2);
             tplSwitch.addEventListener('keydown', (e)=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); toggle2(); }});
           }
 
-          // Roles dynamic rows
-          window.addRoleRow = function() {
-            const grid = document.getElementById('rolesGrid');
-            if (!grid) return;
-            
-            // Убрать сообщение "Нет ролей" если оно есть
-            const emptyMsg = grid.querySelector('div[style*="grid-column: 1 / -1"]');
-            if (emptyMsg) {
-              grid.removeChild(emptyMsg);
-            }
-            
-            // Determine which form to bind inputs to
-            const tplRolesForm = document.getElementById('tpl-roles-form');
-            const evtForm = document.getElementById('evt-roles-form');
-            const targetFormId = tplRolesForm ? 'tpl-roles-form' : (evtForm ? 'evt-roles-form' : null);
-            const nameInput = document.createElement('input');
-            nameInput.type = 'text';
-            nameInput.name = 'role_names';
-            nameInput.style.width = '100%';
-            nameInput.placeholder = 'Название роли';
-            if (targetFormId) nameInput.setAttribute('form', targetFormId);
-
-            const delBtn = document.createElement('button');
-            delBtn.type = 'button';
-            delBtn.className = 'btn';
-            delBtn.style.background = '#ef4444';
-            delBtn.style.padding = '4px 8px';
-            delBtn.textContent = '✕';
-            delBtn.onclick = function(){ removeRoleRow(delBtn); };
-
-            grid.appendChild(nameInput);
-            grid.appendChild(delBtn);
+          // --- Preview upcoming occurrences ---
+          function parseBaseDateTime(str) {
+            if (!str) return null;
+            try { return new Date(str.replace(' ', 'T')); } catch(e) { return null; }
           }
-
-          window.removeRoleRow = function(btn) {
-            const grid = document.getElementById('rolesGrid');
-            if (!grid) return;
-            const cell = btn;
-            const nameInput = cell.previousElementSibling;
-            if (nameInput) {
-              grid.removeChild(nameInput);
-              grid.removeChild(cell);
-              
-              // Если больше нет ролей, показать сообщение
-              const remainingInputs = grid.querySelectorAll('input[name="role_names"]');
-              if (remainingInputs.length === 0) {
-                const emptyMsg = document.createElement('div');
-                emptyMsg.style.cssText = 'grid-column: 1 / -1; color: #9ca3af; font-style: italic; padding: 8px 0;';
-                emptyMsg.textContent = 'Нет ролей. Нажмите "Добавить роль" чтобы создать.';
-                grid.appendChild(emptyMsg);
+          function addByUnit(date, unit, amount) {
+            const d = new Date(date.getTime());
+            if (unit === 'day') d.setDate(d.getDate() + amount);
+            else if (unit === 'week') d.setDate(d.getDate() + amount * 7);
+            else if (unit === 'month') d.setMonth(d.getMonth() + amount);
+            return d;
+          }
+          function formatRu(dt) {
+            const pad = n => (n < 10 ? '0'+n : ''+n);
+            return `${pad(dt.getDate())}.${pad(dt.getMonth()+1)}.${dt.getFullYear()} ${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+          }
+          function getCtx() {
+            const inUpdate = !!document.getElementById('tpl-update-form');
+            const inConvert = !!document.getElementById('tpl-convert-form');
+            const baseStr = '{{ event[2] }}';
+            return {
+              base: parseBaseDateTime(baseStr),
+              recurring: () => {
+                if (inUpdate) return document.getElementById('tplKindSwitch')?.classList.contains('on');
+                if (inConvert) return document.getElementById('newKindSwitch')?.classList.contains('on');
+                return false;
+              },
+              values: () => {
+                let every = 1, unit = 'week', horizon = 60;
+                if (inUpdate) {
+                  const f = document.getElementById('tpl-update-form');
+                  if (f) {
+                    every = parseInt(f.querySelector('input[name="repeat_every"]').value || '1', 10);
+                    unit = f.querySelector('select[name="repeat_unit"]').value || 'week';
+                    horizon = parseInt(f.querySelector('input[name="planning_horizon_days"]').value || '60', 10);
+                  }
+                } else if (inConvert) {
+                  const f = document.getElementById('tpl-convert-form');
+                  if (f) {
+                    every = parseInt(f.querySelector('input[name="repeat_every"]').value || '1', 10);
+                    unit = f.querySelector('select[name="repeat_unit"]').value || 'week';
+                    horizon = parseInt(f.querySelector('input[name="planning_horizon_days"]').value || '60', 10);
+                  }
+                }
+                return { every: Math.max(1, every||1), unit, horizon: Math.max(1, horizon||1) };
               }
-            }
+            };
           }
+          function updateOccurrencesPreview() {
+            const box = document.getElementById('occurrencePreview');
+            if (!box) return;
+            const ctx = getCtx();
+            box.textContent = '';
+            if (!ctx.base || !ctx.recurring()) return;
+            const { every, unit, horizon } = ctx.values();
+            const end = new Date(ctx.base.getTime());
+            end.setDate(end.getDate() + horizon);
+            const result = [];
+            let cur = addByUnit(ctx.base, unit, every);
+            let guard = 0;
+            while (cur <= end && guard < 200 && result.length < 20) {
+              result.push(formatRu(cur));
+              cur = addByUnit(cur, unit, every);
+              guard++;
+            }
+            box.textContent = result.length ? ('Ориентировочно будут созданы: ' + result.join(', ')) : 'В горизонте не создаются дополнительные мероприятия.';
+          }
+          // Listen to changes
+          const upd = document.getElementById('tpl-update-form');
+          if (upd) {
+            upd.addEventListener('input', (e)=>{
+              if (['repeat_every','repeat_unit','planning_horizon_days'].includes(e.target.name)) updateOccurrencesPreview();
+            });
+            upd.addEventListener('change', (e)=>{
+              if (['repeat_every','repeat_unit','planning_horizon_days'].includes(e.target.name)) updateOccurrencesPreview();
+            });
+          }
+          const conv = document.getElementById('tpl-convert-form');
+          if (conv) {
+            conv.addEventListener('input', (e)=>{
+              if (['repeat_every','repeat_unit','planning_horizon_days'].includes(e.target.name)) updateOccurrencesPreview();
+            });
+            conv.addEventListener('change', (e)=>{
+              if (['repeat_every','repeat_unit','planning_horizon_days'].includes(e.target.name)) updateOccurrencesPreview();
+            });
+          }
+          // Initial render
+          updateOccurrencesPreview();
         })();
       </script>
       {% endif %}
