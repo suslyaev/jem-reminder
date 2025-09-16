@@ -221,12 +221,12 @@
       <a class="link" href="/{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">← Назад</a>
       <div class="group-header">
         <h2>{{ group[2] if group else '' }}</h2>
-        {% if is_admin %}
-          <div style="display: flex; gap: 8px; align-items: center;">
-            <button class="message-btn" onclick="openGroupMessageModal()" style="background: #3b82f6; color: white; border: none; border-radius: 4px; padding: 4px 8px; cursor: pointer; font-size: 12px;">✉️</button>
-            <a class="group-gear" href="/group/{{ group[0] }}/settings{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Настройки">⚙️</a>
-          </div>
-        {% endif %}
+        <div style="display: flex; gap: 8px; align-items: center;">
+          {% if is_admin %}
+          <button class="message-btn" onclick="openGroupMessageModal()" style="background: #3b82f6; color: white; border: none; border-radius: 4px; padding: 4px 8px; cursor: pointer; font-size: 12px;">✉️</button>
+          {% endif %}
+          <a class="group-gear" href="/group/{{ group[0] }}/settings{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Настройки">⚙️</a>
+        </div>
       </div>
       <div style="display: flex; align-items: flex-start; gap: 20px; margin-bottom: 20px;">
         <div style="flex: 1;">
@@ -361,7 +361,37 @@
                   <input type="hidden" name="per_page" value="{{ per_page }}">
                 </form>
               {% else %}
-                <!-- Для обычных пользователей только ссылка на настройки -->
+                <!-- Для обычных пользователей: карточка как у админов, но поля только для чтения -->
+                <!-- Первая строка: название (read-only) -->
+                <div class="row" style="margin-bottom: 8px; width: 100%; justify-content: space-between;">
+                  <input class="name-input" type="text" name="name_ro" placeholder="Название" value="{{ e.name }}" style="flex: 1; margin-right: 8px;" disabled />
+                </div>
+                <!-- Вторая строка: дата и время (read-only) -->
+                <div class="row" style="margin-bottom: 12px; width: 100%;">
+                  <input class="time-input" type="datetime-local" name="time_ro" value="{{ e.time_input }}" style="flex: 1; margin-right: 8px; max-width: 180px;" disabled />
+                </div>
+                <!-- Роли: можно забронировать свободные и отменить свою бронь -->
+                {% if e.role_requirements and e.role_requirements|length > 0 %}
+                <div class="row" style="flex-direction: column; align-items: stretch; gap: 6px;">
+                  {% for rname, req in e.role_requirements %}
+                    <div class="row" style="gap: 8px; align-items: center;">
+                      <div style="min-width: 120px; color: var(--muted);">{{ rname }}</div>
+                      {% set assigned_uid = e.role_assignments.get(rname) %}
+                      {% if assigned_uid %}
+                        <div class="autocomplete-container" style="flex: 1;">
+                          <input class="autocomplete-input" type="text" value="{{ e.role_assignment_labels.get(rname, member_name_map.get(assigned_uid, 'ID: ' ~ assigned_uid)) }}" disabled>
+                        </div>
+                        {% if assigned_uid == current_user_id %}
+                          <button class="btn" type="button" onclick="unbookRole({{ e.id }}, '{{ rname }}')" style="background: var(--danger);">Отменить бронь</button>
+                        {% endif %}
+                      {% else %}
+                        <div style="flex: 1; color: var(--muted);">Свободно</div>
+                        <button class="btn" type="button" onclick="bookRoleFromRow(this, {{ e.id }}, '{{ rname }}')" {% if not e.allow_multi_roles_per_user and e.current_user_has_role %}disabled title="У вас уже есть роль в этом мероприятии"{% endif %}>Забронировать</button>
+                      {% endif %}
+                    </div>
+                  {% endfor %}
+                </div>
+                {% endif %}
                 <div class="actions" style="justify-content: flex-end; margin-top: 8px;">
                   <a class="gear-inline" href="/group/{{ group[0] }}/events/{{ e.id }}/settings{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Настройки оповещений" style="text-decoration: none; padding: 8px 12px; background: var(--primary); color: white; border-radius: 6px; font-size: 16px; border: none; cursor: pointer; display: inline-block; text-align: center; min-width: 40px;">🔔</a>
                 </div>
@@ -420,56 +450,30 @@
               <div id="archivedEventsList">
                 {% for e in archived_events %}
               <div class="event-card archived-event" data-name="{{ e.name.lower() }}" data-date="{{ e.time_display.lower() }}" data-responsible="{{ e.responsible_name.lower() if e.responsible_name else '' }}">
-              {% if is_admin %}
-                <form method="post" action="/group/{{ group[0] }}/events/{{ e.id }}/update-from-card{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">
-                  <!-- Первая строка: название и удаление -->
-                  <div class="row" style="margin-bottom: 8px; width: 100%; justify-content: space-between;">
-                    <input class="name-input" type="text" name="name" placeholder="Название" value="{{ e.name }}" style="flex: 1; margin-right: 8px;" />
-                    <button class="btn" type="button" onclick="deleteEvent({{ e.id }})" style="background: var(--danger); color: white; border: none; border-radius: 4px; padding: 8px 12px; cursor: pointer; font-size: 16px;">✕</button>
-                  </div>
-                  
-                  <!-- Вторая строка: дата и время -->
-                  <div class="row" style="margin-bottom: 12px; width: 100%;">
-                    <input class="time-input" type="datetime-local" name="time" value="{{ e.time_input }}" style="flex: 1; margin-right: 8px; max-width: 180px;" />
-                  </div>
-
-                  {% if e.role_requirements and e.role_requirements|length > 0 %}
-                  <div class="row" style="flex-direction: column; align-items: stretch; gap: 6px;">
-                    {% for rname, req in e.role_requirements %}
-                      <div class="row" style="gap: 8px; align-items: center;">
-                        <div style="min-width: 120px; color: var(--muted);">{{ rname }}</div>
-                        {% set assigned_uid = e.role_assignments.get(rname) %}
-                        <div class="autocomplete-container" style="flex: 1;">
-                          {% if assigned_uid %}
-                            <input class="autocomplete-input" type="text" value="{{ e.role_assignment_labels.get(rname, member_name_map.get(assigned_uid, 'ID: ' ~ assigned_uid)) }}" disabled>
-                          {% else %}
-                            <input class="autocomplete-input" type="text" value="Свободно" disabled>
-                          {% endif %}
-                        </div>
+                <!-- Название и дата (read-only) -->
+                <div class="row" style="margin-bottom: 8px; width: 100%; justify-content: space-between;">
+                  <input class="name-input" type="text" placeholder="Название" value="{{ e.name }}" style="flex: 1; margin-right: 8px;" disabled />
+                </div>
+                <div class="row" style="margin-bottom: 12px; width: 100%;">
+                  <input class="time-input" type="datetime-local" value="{{ e.time_input }}" style="flex: 1; margin-right: 8px; max-width: 180px;" disabled />
+                </div>
+                {% if e.role_requirements and e.role_requirements|length > 0 %}
+                <div class="row" style="flex-direction: column; align-items: stretch; gap: 6px;">
+                  {% for rname, req in e.role_requirements %}
+                    <div class="row" style="gap: 8px; align-items: center;">
+                      <div style="min-width: 120px; color: var(--muted);">{{ rname }}</div>
+                      {% set assigned_uid = e.role_assignments.get(rname) %}
+                      <div class="autocomplete-container" style="flex: 1;">
+                        <input class="autocomplete-input" type="text" value="{% if assigned_uid %}{{ e.role_assignment_labels.get(rname, member_name_map.get(assigned_uid, 'ID: ' ~ assigned_uid)) }}{% else %}—{% endif %}" disabled>
                       </div>
-                    {% endfor %}
-                  </div>
-                  {% endif %}
-                  
-                  <!-- Кнопки: слева - сохранить, справа - настройки -->
-                  <div class="actions" style="justify-content: space-between; margin-top: 8px;">
-                    <div style="display: flex; gap: 8px;">
-                      <button class="btn" type="submit">Сохранить</button>
                     </div>
-                    <a class="gear-inline" href="/group/{{ group[0] }}/events/{{ e.id }}/settings{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Настройки оповещений" style="text-decoration: none; padding: 8px 12px; background: var(--primary); color: white; border-radius: 6px; font-size: 16px; border: none; cursor: pointer; display: inline-block; text-align: center; min-width: 40px;">🔔</a>
-                  </div>
-                  <!-- Скрытые поля для параметров пагинации -->
-                  <input type="hidden" name="tab" value="{{ active_tab }}">
-                  <input type="hidden" name="page" value="{{ current_page }}">
-                  <input type="hidden" name="per_page" value="{{ per_page }}">
-                </form>
-              {% else %}
-                <!-- Кнопки для обычных пользователей в архиве -->
+                  {% endfor %}
+                </div>
+                {% endif %}
                 <div class="actions" style="justify-content: flex-end; margin-top: 8px;">
                   <a class="gear-inline" href="/group/{{ group[0] }}/events/{{ e.id }}/settings{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Настройки оповещений" style="text-decoration: none; padding: 8px 12px; background: var(--primary); color: white; border-radius: 6px; font-size: 16px; border: none; cursor: pointer; display: inline-block; text-align: center; min-width: 40px;">🔔</a>
                 </div>
-              {% endif %}
-            </div>
+              </div>
                 {% endfor %}
               </div>
             </div>
@@ -1088,8 +1092,8 @@
 
       function bookRoleFromRow(btn, eventId, roleName) {
         const row = btn.closest('.row');
-        const container = row.querySelector('.autocomplete-container');
-        const hidden = container.querySelector('input[name="selected_user_id"]');
+        const container = row ? row.querySelector('.autocomplete-container') : null;
+        const hidden = container ? container.querySelector('input[name="selected_user_id"]') : null;
         const selected = hidden && hidden.value ? hidden.value : '';
         const formData = new FormData();
         formData.append('tab', '{{ active_tab }}');

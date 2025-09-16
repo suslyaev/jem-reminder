@@ -106,9 +106,7 @@
                   <div class="meta-line">Роль: {{ role_label }}</div>
                   <div class="meta-line">Мероприятий: {{ cnt }}</div>
                 </div>
-                {% if role in ['owner','admin','superadmin'] %}
-                  <a class="gear" href="/group/{{ gid }}/settings{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Настройки">⚙️</a>
-                {% endif %}
+                <a class="gear" href="/group/{{ gid }}/settings{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Настройки">⚙️</a>
               </div>
             {% endfor %}
           </div>

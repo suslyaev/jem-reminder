@@ -634,19 +634,15 @@ async def update_event_from_card(request: Request, gid: int, eid: int, name: str
 async def group_settings(request: Request, gid: int):
     urow = _require_user(request)
     user_id = urow[0]
-    # Allow all users to see settings, but restrict admin functions
-    try:
-        role = _require_admin(user_id, gid)
-    except:
-        # If not admin, get user role for display purposes
-        role = RoleRepo.get_user_role(user_id, gid)
+    # Allow all users to see settings; restrict admin functions by role
+    role = RoleRepo.get_user_role(user_id, gid)
     group = GroupRepo.get_by_id(gid)
-    notifications = NotificationRepo.list_notifications(gid)
+    notifications = NotificationRepo.list_notifications(gid) if role in ['admin', 'owner', 'superadmin'] else []
     # Load personal notification templates for this group
-    personal_notifications = NotificationRepo.list_personal_notifications(gid)
-    pending = RoleRepo.list_pending_admins(gid)
-    admins = GroupRepo.list_group_admins(gid)
-    members = GroupRepo.list_group_members_detailed(gid)
+    personal_notifications = NotificationRepo.list_personal_notifications(gid) if role in ['admin', 'owner', 'superadmin'] else []
+    pending = RoleRepo.list_pending_admins(gid) if role in ['admin', 'owner', 'superadmin'] else []
+    admins = GroupRepo.list_group_admins(gid) if role in ['admin', 'owner', 'superadmin'] else []
+    members = GroupRepo.list_group_members_detailed(gid) if role in ['admin', 'owner', 'superadmin'] else []
     current_display_name = DisplayNameRepo.get_display_name(gid, user_id)
     
     # Filter out superadmin if current user is not superadmin
@@ -855,7 +851,8 @@ async def event_settings(request: Request, gid: int, eid: int):
     
     # Check if user has access (admin or participant with booking)
     role = RoleRepo.get_user_role(user_id, gid)
-    if role not in ['admin', 'owner', 'superadmin'] and not BookingRepo.has_booking(user_id, eid):
+    # Allow: admins/owner/superadmin OR any group member OR anyone who has a booking on this event
+    if role is None and not BookingRepo.has_booking(user_id, eid):
         raise HTTPException(status_code=403, detail="Access denied")
     
     group = GroupRepo.get_by_id(gid)
@@ -1642,6 +1639,74 @@ async def update_member_display_name(request: Request, gid: int, uid: int, displ
     DisplayNameRepo.set_display_name(gid, uid, display_name)
     return RedirectResponse(f"/group/{gid}/settings?ok=member_name_saved", status_code=303)
 
+@app.post('/group/{gid}/settings/member/{uid}/role')
+async def update_member_role(request: Request, gid: int, uid: int, new_role: str = Form(...)):
+    urow = _require_user(request)
+    actor_id = urow[0]
+    # Only owner or superadmin can change roles
+    actor_role = RoleRepo.get_user_role(actor_id, gid)
+    from config import SUPERADMIN_ID
+    is_super = (urow[1] == SUPERADMIN_ID)
+    if actor_role not in ['owner'] and not is_super:
+        raise HTTPException(status_code=403, detail="Only owner or superadmin can change roles")
+
+    new_role = (new_role or '').strip().lower()
+    if new_role not in ['member', 'admin', 'owner']:
+        return RedirectResponse(f"/group/{gid}/settings?ok=member_role_error", status_code=303)
+
+    # Apply role change
+    try:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            # Helper: clear all group roles for user
+            cur.execute("DELETE FROM user_group_roles WHERE group_id = ? AND user_id = ?", (gid, uid))
+            if new_role == 'owner':
+                # Set as owner in groups table
+                # Find previous owner
+                cur.execute("SELECT owner_user_id FROM groups WHERE id = ?", (gid,))
+                row = cur.fetchone()
+                prev_owner = row[0] if row else None
+                cur.execute("UPDATE groups SET owner_user_id = ? WHERE id = ?", (uid, gid))
+                # Set new owner's role
+                cur.execute("INSERT OR IGNORE INTO user_group_roles (user_id, group_id, role, confirmed) VALUES (?,?,?,1)", (uid, gid, 'owner'))
+                # Demote previous owner to admin if exists and different
+                if prev_owner and prev_owner != uid:
+                    cur.execute("DELETE FROM user_group_roles WHERE group_id = ? AND user_id = ?", (gid, prev_owner))
+                    cur.execute("INSERT OR IGNORE INTO user_group_roles (user_id, group_id, role, confirmed) VALUES (?,?,?,1)", (prev_owner, gid, 'admin'))
+            else:
+                # Set member or admin
+                cur.execute("INSERT OR IGNORE INTO user_group_roles (user_id, group_id, role, confirmed) VALUES (?,?,?,1)", (uid, gid, new_role))
+            conn.commit()
+        ok = 'member_role_saved'
+    except Exception:
+        ok = 'member_role_error'
+    return RedirectResponse(f"/group/{gid}/settings?ok={ok}", status_code=303)
+
+@app.post('/group/{gid}/settings/member/{uid}/remove')
+async def remove_member(request: Request, gid: int, uid: int):
+    urow = _require_user(request)
+    actor_id = urow[0]
+    # Only owner or superadmin can remove
+    actor_role = RoleRepo.get_user_role(actor_id, gid)
+    from config import SUPERADMIN_ID
+    is_super = (urow[1] == SUPERADMIN_ID)
+    if actor_role not in ['owner'] and not is_super:
+        raise HTTPException(status_code=403, detail="Only owner or superadmin can remove members")
+
+    # Do not allow removing current owner
+    grp = GroupRepo.get_by_id(gid)
+    if grp and grp[3] == uid:  # owner_user_id
+        return RedirectResponse(f"/group/{gid}/settings?ok=member_remove_owner_error", status_code=303)
+
+    try:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("DELETE FROM user_group_roles WHERE group_id = ? AND user_id = ?", (gid, uid))
+            conn.commit()
+        ok = 'member_removed'
+    except Exception:
+        ok = 'member_remove_error'
+    return RedirectResponse(f"/group/{gid}/settings?ok={ok}", status_code=303)
 
 @app.post('/group/{gid}/settings/members/add')
 async def add_group_member(request: Request, gid: int, identifier_type: str = Form(...), identifier: str = Form(...)):
