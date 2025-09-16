@@ -174,6 +174,14 @@ class GroupRepo:
             return cur.fetchone()
 
     @staticmethod
+    def list_all() -> List[Tuple[int, str, str]]:
+        """Return all groups as (id, title, telegram_chat_id)."""
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT id, title, telegram_chat_id FROM groups ORDER BY title")
+            return cur.fetchall()
+
+    @staticmethod
     def list_user_groups_with_roles(user_id: int) -> List[Tuple[int, str, str, str]]:
         """Return list of (group_id, title, role, telegram_chat_id) for the user."""
         with get_conn() as conn:
