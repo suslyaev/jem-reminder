@@ -266,7 +266,7 @@
                 <div class="pagination-container">
                   <div class="pagination-controls">
                     {% if active_pagination.has_prev %}
-                      <a href="/group/{{ group[0] }}?page={{ active_pagination.current_page - 1 }}&per_page={{ per_page }}{% if request.query_params.get('tg_id') | safe_tg_id %}&tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" class="pagination-btn">← Назад</a>
+                      <a href="/group/{{ group[0] }}?page={{ active_pagination.current_page - 1 }}&per_page={{ per_page }}{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" class="pagination-btn">← Назад</a>
                     {% else %}
                       <span class="pagination-btn disabled">← Назад</span>
                     {% endif %}
@@ -277,7 +277,7 @@
                     </span>
                     
                     {% if active_pagination.has_next %}
-                      <a href="/group/{{ group[0] }}?page={{ active_pagination.current_page + 1 }}&per_page={{ per_page }}{% if request.query_params.get('tg_id') | safe_tg_id %}&tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" class="pagination-btn">Вперед →</a>
+                      <a href="/group/{{ group[0] }}?page={{ active_pagination.current_page + 1 }}&per_page={{ per_page }}{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" class="pagination-btn">Вперед →</a>
                     {% else %}
                       <span class="pagination-btn disabled">Вперед →</span>
                     {% endif %}
@@ -352,8 +352,9 @@
                   <div class="actions" style="justify-content: space-between; margin-top: 8px;">
                     <div style="display: flex; gap: 8px;">
                       <button class="btn" type="submit">Сохранить</button>
+                      <button class="btn" type="button" onclick="notifyNow({{ e.id }})">✉️ Сообщение</button>
                     </div>
-                    <a class="gear-inline" href="/group/{{ group[0] }}/events/{{ e.id }}/settings{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Настройки оповещений" style="text-decoration: none; padding: 8px 12px; background: var(--primary); color: white; border-radius: 6px; font-size: 16px; border: none; cursor: pointer; display: inline-block; text-align: center; min-width: 40px;">🔔</a>
+                    <a class="gear-inline" href="/group/{{ group[0] }}/events/{{ e.id }}/settings{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Настройки" style="text-decoration: none; padding: 8px 12px; background: var(--primary); color: white; border-radius: 6px; font-size: 16px; border: none; cursor: pointer; display: inline-block; text-align: center; min-width: 40px;">⚙️</a>
                   </div>
                   <!-- Скрытые поля для параметров пагинации -->
                   <input type="hidden" name="tab" value="{{ active_tab }}">
@@ -393,7 +394,7 @@
                 </div>
                 {% endif %}
                 <div class="actions" style="justify-content: flex-end; margin-top: 8px;">
-                  <a class="gear-inline" href="/group/{{ group[0] }}/events/{{ e.id }}/settings{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Настройки оповещений" style="text-decoration: none; padding: 8px 12px; background: var(--primary); color: white; border-radius: 6px; font-size: 16px; border: none; cursor: pointer; display: inline-block; text-align: center; min-width: 40px;">🔔</a>
+                  <a class="gear-inline" href="/group/{{ group[0] }}/events/{{ e.id }}/settings{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Настройки" style="text-decoration: none; padding: 8px 12px; background: var(--primary); color: white; border-radius: 6px; font-size: 16px; border: none; cursor: pointer; display: inline-block; text-align: center; min-width: 40px;">⚙️</a>
                 </div>
               {% endif %}
             </div>
@@ -486,7 +487,7 @@
                     <div style="display: flex; gap: 8px;">
                       <button class="btn" type="submit">Сохранить</button>
                     </div>
-                    <a class="gear-inline" href="/group/{{ group[0] }}/events/{{ e.id }}/settings{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Настройки оповещений" style="text-decoration: none; padding: 8px 12px; background: var(--primary); color: white; border-radius: 6px; font-size: 16px; border: none; cursor: pointer; display: inline-block; text-align: center; min-width: 40px;">🔔</a>
+                    <a class="gear-inline" href="/group/{{ group[0] }}/events/{{ e.id }}/settings{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Настройки" style="text-decoration: none; padding: 8px 12px; background: var(--primary); color: white; border-radius: 6px; font-size: 16px; border: none; cursor: pointer; display: inline-block; text-align: center; min-width: 40px;">⚙️</a>
                   </div>
                   <!-- Скрытые поля для параметров пагинации -->
                   <input type="hidden" name="tab" value="{{ active_tab }}">
@@ -515,7 +516,7 @@
                 </div>
                 {% endif %}
                 <div class="actions" style="justify-content: flex-end; margin-top: 8px;">
-                  <a class="gear-inline" href="/group/{{ group[0] }}/events/{{ e.id }}/settings{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Настройки оповещений" style="text-decoration: none; padding: 8px 12px; background: var(--primary); color: white; border-radius: 6px; font-size: 16px; border: none; cursor: pointer; display: inline-block; text-align: center; min-width: 40px;">🔔</a>
+                  <a class="gear-inline" href="/group/{{ group[0] }}/events/{{ e.id }}/settings{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Настройки" style="text-decoration: none; padding: 8px 12px; background: var(--primary); color: white; border-radius: 6px; font-size: 16px; border: none; cursor: pointer; display: inline-block; text-align: center; min-width: 40px;">⚙️</a>
                 </div>
               {% endif %}
               </div>
@@ -762,6 +763,25 @@
               }
             }
           })();
+
+          // Send booking-enabled group message
+          window.sendGroupMessage = function(eventId) {
+            if (!confirm('Отправить сообщение в группу с кнопками для бронирования?')) return;
+            const defaultMsg = `Напоминание о мероприятии «${e && e.name ? e.name : ''}»`;
+            const msg = prompt('Текст сообщения (необязательно):', defaultMsg) || defaultMsg;
+            const formData = new FormData();
+            formData.append('message', msg);
+            fetch(`/group/{{ group[0] }}/send-group-message{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}`, { method: 'POST', body: formData })
+              .then(r => r.json())
+              .then(data => {
+                if (data && data.success) {
+                  showToast('Сообщение отправлено');
+                } else {
+                  showToast('Ошибка отправки: ' + (data && data.error ? data.error : 'Неизвестная ошибка'), 'error');
+                }
+              })
+              .catch(() => showToast('Ошибка отправки сообщения', 'error'));
+          };
         </script>
       {% endif %}
     </div>
@@ -1238,6 +1258,21 @@
           showToast('Ошибка отправки сообщения', 'error');
         });
       }
+
+      // Trigger immediate group notification (bot will send on next tick)
+      window.notifyNow = function(eventId) {
+        if (!confirm('Отправить сообщение в группу сейчас?')) return;
+        fetch(`/group/{{ group[0] }}/events/${eventId}/notify-now{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}`, { method: 'POST' })
+          .then(r => r.json())
+          .then(data => {
+            if (data && data.success) {
+              showToast('Сообщение запланировано');
+            } else {
+              showToast('Ошибка: ' + (data && data.error ? data.error : 'Неизвестная ошибка'), 'error');
+            }
+          })
+          .catch(() => showToast('Ошибка отправки', 'error'));
+      };
 
       // Initialize create event modal button
       document.addEventListener('DOMContentLoaded', function() {

@@ -1257,6 +1257,37 @@ async def add_event_notification_absolute(request: Request, gid: int, eid: int, 
     return RedirectResponse(url=f"/group/{gid}/events/{eid}/settings?ok=notification_added&tg_id={tg_id}", status_code=303)
 
 
+@app.post('/group/{gid}/events/{eid}/notify-now')
+async def trigger_group_notification_now(request: Request, gid: int, eid: int):
+    """Create a group event notification scheduled for 'now' so bot will send it on the next tick."""
+    tg_id = request.query_params.get('tg_id')
+    urow = _require_user(request)
+    user_id = urow[0]
+    # Admins/owners/superadmins only
+    _require_admin(user_id, gid)
+    event = EventRepo.get_by_id(eid)
+    if not event:
+        return {"success": False, "error": "Мероприятие не найдено"}
+    # event[2] is time string "%Y-%m-%d %H:%M" (seconds optional handled elsewhere)
+    try:
+        try:
+            event_time = datetime.strptime(event[2], "%Y-%m-%d %H:%M")
+        except ValueError:
+            event_time = datetime.strptime(event[2], "%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return {"success": False, "error": "Некорректная дата мероприятия"}
+
+    now = datetime.now()
+    # Compute minutes_before so that notification time ~ now (next tick)
+    delta_seconds = int((event_time - now).total_seconds())
+    minutes_before = max(1, delta_seconds // 60)
+    try:
+        EventNotificationRepo.add_notification(eid, minutes_before, 'minutes', None)
+        return {"success": True}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 @app.post('/group/{gid}/events/{eid}/notifications/{nid}/delete')
 async def delete_event_notification(request: Request, gid: int, eid: int, nid: int):
     tg_id = request.query_params.get('tg_id')
