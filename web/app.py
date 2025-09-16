@@ -310,12 +310,17 @@ async def index(request: Request):
             groups_with_counts = []
             for gid, title, role, chat_id in groups:
                 groups_with_counts.append((gid, title, role, GroupRepo.count_group_events(gid), _role_label(role), chat_id))
+            # If superadmin, also load users list for admin panel
+            is_super = (user_row[1] == SUPERADMIN_ID) if SUPERADMIN_ID else False
+            users = []
+            if is_super:
+                users = UserRepo.list_with_groups()
             return render('index.html', groups=groups_with_counts, user_info={
                 'display': display,
                 'username': username,
                 'telegram_id': telegram_id,
                 'phone': phone,
-            }, request=request)
+            }, users=users, is_superadmin=is_super, request=request)
     
     # Если данные из Telegram не пришли, пробуем из переменных окружения
     if TEST_TELEGRAM_ID:
@@ -345,12 +350,17 @@ async def index(request: Request):
             groups_with_counts = []
             for gid, title, role, chat_id in groups:
                 groups_with_counts.append((gid, title, role, GroupRepo.count_group_events(gid), _role_label(role), chat_id))
+            # If superadmin, also load users list for admin panel
+            is_super = (user_row[1] == SUPERADMIN_ID) if SUPERADMIN_ID else False
+            users = []
+            if is_super:
+                users = UserRepo.list_with_groups()
             return render('index.html', groups=groups_with_counts, user_info={
                 'display': display,
                 'username': username,
                 'telegram_id': telegram_id,
                 'phone': phone,
-            }, request=request)
+            }, users=users, is_superadmin=is_super, request=request)
     
     # Если ничего не получилось, показываем стартовую страницу
     return render('welcome.html', message="Требуется авторизация", user_info=None, request=request)
@@ -877,6 +887,46 @@ async def delete_group_notification(request: Request, gid: int, nid: int, tab: s
     NotificationRepo.delete_notification(nid)
     tab_param = f"&tab={tab}" if tab else ""
     return RedirectResponse(url=f"/group/{gid}/settings?ok=notification_deleted&tg_id={tg_id}{tab_param}", status_code=303)
+@app.post('/admin/users/{uid}/block')
+async def admin_block_user(request: Request, uid: int, blocked: int = Form(...)):
+    urow = _require_user(request)
+    # Only superadmin can block users
+    if urow[1] != SUPERADMIN_ID:
+        raise HTTPException(status_code=403, detail="Only superadmin")
+    try:
+        UserRepo.set_blocked(uid, bool(int(blocked) == 0))  # toggle based on sent value
+        return RedirectResponse(url=f"/?ok=user_blocked", status_code=303)
+    except Exception:
+        return RedirectResponse(url=f"/?ok=error", status_code=303)
+
+@app.post('/admin/users/{uid}/delete')
+async def admin_delete_user(request: Request, uid: int):
+    urow = _require_user(request)
+    # Only superadmin can delete users
+    if urow[1] != SUPERADMIN_ID:
+        raise HTTPException(status_code=403, detail="Only superadmin")
+    try:
+        UserRepo.delete_user(uid)
+        return RedirectResponse(url=f"/?ok=user_deleted", status_code=303)
+    except Exception:
+        return RedirectResponse(url=f"/?ok=error", status_code=303)
+
+@app.post('/admin/send-message')
+async def admin_send_message(request: Request, recipient_id: int = Form(...), message: str = Form(...)):
+    urow = _require_user(request)
+    # Only superadmin can send arbitrary messages here
+    if urow[1] != SUPERADMIN_ID:
+        raise HTTPException(status_code=403, detail="Only superadmin")
+    # Resolve recipient telegram_id
+    tid = UserRepo.get_telegram_id_by_user_id(recipient_id)
+    if not tid:
+        return {"success": False, "error": "Получатель не найден"}
+    try:
+        from bot import bot
+        await bot.send_message(tid, message)
+        return {"success": True}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 
 @app.get('/group/{gid}/events/{eid}/settings', response_class=HTMLResponse)

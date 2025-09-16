@@ -73,6 +73,11 @@
       .search-clear.show {
         display: block;
       }
+      .tabs { display: flex; gap: 8px; margin: 8px 0 12px 0; }
+      .tab-btn { padding: 8px 16px; border: 1px solid var(--border); background: var(--card); color: var(--text); border-radius: 8px; cursor: pointer; }
+      .tab-btn.active { background: var(--btn); color: #fff; }
+      .tab-content { display: block; }
+      .tab-content.hidden { display: none; }
     </style>
   </head>
   <body>
@@ -83,16 +88,23 @@
         <div class="meta-line">ID: {{ user_info.telegram_id }}</div>
         {% if user_info.phone %}<div class="meta-line">Телефон: {{ user_info.phone }}</div>{% endif %}
       </div>
-      <h3>Выберите группу</h3>
-      {% if not groups %}
-        <div class="empty">Нет доступных групп</div>
-      {% else %}
-        <div>
-          <div class="search-container">
-            <input type="text" id="groupSearch" class="search-box" placeholder="🔍 Поиск групп..." />
-            <button type="button" id="groupSearchClear" class="search-clear">✕</button>
-          </div>
-          <div id="groupsList">
+      {% if is_superadmin %}
+        <div class="tabs" style="display:flex; gap:8px; margin-bottom: 12px;">
+          <button class="tab-btn active" id="tab-groups" onclick="switchIndexTab('groups')">Группы</button>
+          <button class="tab-btn" id="tab-users" onclick="switchIndexTab('users')">Пользователи</button>
+        </div>
+
+        <div id="tab-content-groups" class="tab-content">
+        <h3>Выберите группу</h3>
+        {% if not groups %}
+          <div class="empty">Нет доступных групп</div>
+        {% else %}
+          <div>
+            <div class="search-container">
+              <input type="text" id="groupSearch" class="search-box" placeholder="🔍 Поиск групп..." />
+              <button type="button" id="groupSearchClear" class="search-clear">✕</button>
+            </div>
+            <div id="groupsList">
             {% for gid, title, role, cnt, role_label, chat_id in groups %}
               <div class="group-card" data-title="{{ title.lower() }}" data-role="{{ role_label.lower() }}" data-chat="{{ chat_id }}">
                 <a href="/group/{{ gid }}{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="text-decoration: none;">
@@ -109,8 +121,91 @@
                 <a class="gear" href="/group/{{ gid }}/settings{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Настройки">⚙️</a>
               </div>
             {% endfor %}
+            </div>
           </div>
+        {% endif %}
         </div>
+
+        <div id="tab-content-users" class="tab-content hidden">
+        <h3>Выберите пользователя</h3>
+        <div class="search-container">
+          <input type="text" id="userSearch" class="search-box" placeholder="🔍 Поиск пользователей (имя, @ник, TG ID)..." />
+          <button type="button" id="userSearchClear" class="search-clear">✕</button>
+        </div>
+        <div id="usersList">
+        {% for uid, tid, uname, phone, first_name, last_name, blocked, groups_str in users %}
+          {% set display = (first_name or '') + (' ' if first_name and last_name else '') + (last_name or '') %}
+          {% if not display %}{% set display = uname and ('@' + uname) or ('ID:' ~ uid) %}{% endif %}
+          <div class="group-card user-card" data-name="{{ (display or '') | lower }}" data-uname="{{ (uname or '') | lower }}" data-tgid="{{ tid }}">
+            <div class="group-icon" style="background-color: {{ ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16'][uid % 8] }};">
+              {{ (display[0] if display else (uname and uname[0] or '?')) | upper }}
+            </div>
+            <div class="group-content">
+              <div class="group-title">{{ display }}</div>
+              <div class="meta-line">
+                {% if uname %}
+                  <a class="link" href="https://t.me/{{ uname }}" target="_blank" rel="noopener">@{{ uname }}</a>
+                {% else %}
+                  @—
+                {% endif %}
+                • TG: {{ tid }} • ID: {{ uid }}
+              </div>
+              {% if phone %}<div class="meta-line">Тел: {{ phone }}</div>{% endif %}
+              {% if groups_str %}
+                <div class="meta-line">Группы:<br>
+                  {% for line in groups_str.split('\n') if line %}
+                    {% set parts = line.split('::', 1) %}
+                    {% set g_id = parts[0] %}
+                    {% set g_label = parts[1] if parts|length > 1 else line %}
+                    <a class="link" href="/group/{{ g_id }}{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">{{ g_label }}</a>{% if not loop.last %}<br>{% endif %}
+                  {% endfor %}
+                </div>
+              {% endif %}
+              <div style="margin-top:6px; display:flex; gap:8px; flex-wrap:wrap;">
+                <form method="post" action="/admin/users/{{ uid }}/block{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">
+                  <input type="hidden" name="blocked" value="{{ 0 if not blocked else 1 }}">
+                  <button class="btn" type="submit" style="background: {{ '#ef4444' if not blocked else '#6b7280' }};">{{ 'Заблокировать' if not blocked else 'Разблокировать' }}</button>
+                </form>
+                <form method="post" action="/admin/users/{{ uid }}/delete{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" onsubmit="return confirm('Удалить пользователя и удалить его из всех групп?');">
+                  <button class="btn" type="submit" style="background:#ef4444;">Удалить</button>
+                </form>
+              </div>
+            </div>
+            <button class="message-btn" data-uid="{{ uid }}" data-display-name="{{ display }}" onclick="openUserMessageModal(this)" style="position: absolute; top: 8px; right: 8px; background: #3b82f6; color: white; border: none; border-radius: 4px; padding: 4px 8px; cursor: pointer; font-size: 12px;">✉️</button>
+          </div>
+        {% endfor %}
+        </div>
+        </div>
+      {% else %}
+        <h3>Выберите группу</h3>
+        {% if not groups %}
+          <div class="empty">Нет доступных групп</div>
+        {% else %}
+          <div>
+            <div class="search-container">
+              <input type="text" id="groupSearch" class="search-box" placeholder="🔍 Поиск групп..." />
+              <button type="button" id="groupSearchClear" class="search-clear">✕</button>
+            </div>
+            <div id="groupsList">
+              {% for gid, title, role, cnt, role_label, chat_id in groups %}
+                <div class="group-card" data-title="{{ title.lower() }}" data-role="{{ role_label.lower() }}" data-chat="{{ chat_id }}">
+                  <a href="/group/{{ gid }}{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="text-decoration: none;">
+                    <div class="group-icon" style="background-color: {{ ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16'][gid % 8] }};">
+                      {{ title[0].upper() if title else '?' }}
+                    </div>
+                  </a>
+                  <div class="group-content">
+                    <div class="group-title"><a class="link" href="/group/{{ gid }}{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="text-decoration:none;">{{ title }} (#{{ gid }})</a></div>
+                    <div class="meta-line">{{ chat_id }}</div>
+                    <div class="meta-line">Роль: {{ role_label }}</div>
+                    <div class="meta-line">Мероприятий: {{ cnt }}</div>
+                  </div>
+                  <a class="gear" href="/group/{{ gid }}/settings{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Настройки">⚙️</a>
+                </div>
+              {% endfor %}
+            </div>
+          </div>
+        {% endif %}
       {% endif %}
     </div>
 
@@ -154,12 +249,82 @@
           }
         }
 
+        function switchIndexTab(tab) {
+          const groupsBtn = document.getElementById('tab-groups');
+          const usersBtn = document.getElementById('tab-users');
+          const groupsContent = document.getElementById('tab-content-groups');
+          const usersContent = document.getElementById('tab-content-users');
+          if (tab === 'users') {
+            if (groupsBtn) groupsBtn.classList.remove('active');
+            if (usersBtn) usersBtn.classList.add('active');
+            if (groupsContent) groupsContent.classList.add('hidden');
+            if (usersContent) usersContent.classList.remove('hidden');
+          } else {
+            if (usersBtn) usersBtn.classList.remove('active');
+            if (groupsBtn) groupsBtn.classList.add('active');
+            if (usersContent) usersContent.classList.add('hidden');
+            if (groupsContent) groupsContent.classList.remove('hidden');
+          }
+        }
+
+        window.switchIndexTab = switchIndexTab;
+
+        // Modal messaging to user
+        window.openUserMessageModal = function(btn){
+          const uid = btn.getAttribute('data-uid');
+          const name = btn.getAttribute('data-display-name');
+          const text = prompt('Сообщение для ' + name + ':');
+          if (!text || !text.trim()) return;
+          const fd = new FormData();
+          fd.append('recipient_id', uid);
+          fd.append('message', text.trim());
+          fetch('/admin/send-message{% if request.query_params.get("tg_id") | safe_tg_id %}?tg_id={{ request.query_params.get("tg_id") | safe_tg_id }}{% endif %}', { method: 'POST', body: fd })
+            .then(r => r.json())
+            .then(data => {
+              if (data && data.success) {
+                alert('Отправлено');
+              } else {
+                alert('Ошибка: ' + (data && data.error ? data.error : 'Неизвестная ошибка'));
+              }
+            })
+            .catch(() => alert('Ошибка отправки'));
+        };
+
+        // Users search (superadmin)
+        const userSearch = document.getElementById('userSearch');
+        const userSearchClear = document.getElementById('userSearchClear');
+        const usersList = document.getElementById('usersList');
+        if (userSearch && usersList) {
+          function updateUserSearch() {
+            const q = userSearch.value.toLowerCase().trim();
+            const cards = usersList.querySelectorAll('.user-card');
+            cards.forEach(card => {
+              const nm = card.getAttribute('data-name') || '';
+              const un = card.getAttribute('data-uname') || '';
+              const tg = card.getAttribute('data-tgid') || '';
+              const match = nm.includes(q) || un.includes(q) || tg.includes(q);
+              card.style.display = match ? 'flex' : 'none';
+            });
+            if (userSearchClear) userSearchClear.classList.toggle('show', q.length > 0);
+          }
+          userSearch.addEventListener('input', updateUserSearch);
+          if (userSearchClear) {
+            userSearchClear.addEventListener('click', function() {
+              userSearch.value = '';
+              updateUserSearch();
+              userSearch.focus();
+            });
+          }
+        }
+
         // Handle success messages
         const url = new URL(window.location.href);
         const ok = url.searchParams.get('ok');
         if (ok) {
           const map = { 
-            group_deleted: 'Группа успешно удалена' 
+            group_deleted: 'Группа успешно удалена',
+            user_blocked: 'Статус блокировки обновлен',
+            user_deleted: 'Пользователь удален'
           };
           if (map[ok]) {
             // Create toast notification

@@ -63,21 +63,21 @@ class UserRepo:
     def get_by_telegram_id(telegram_id: int) -> Optional[Tuple]:
         with get_conn() as conn:
             cur = conn.cursor()
-            cur.execute("SELECT id, telegram_id, username, phone, first_name, last_name FROM users WHERE telegram_id = ?", (telegram_id,))
+            cur.execute("SELECT id, telegram_id, username, phone, first_name, last_name, COALESCE(blocked,0) FROM users WHERE telegram_id = ?", (telegram_id,))
             return cur.fetchone()
 
     @staticmethod
     def get_by_id(user_id: int) -> Optional[Tuple]:
         with get_conn() as conn:
             cur = conn.cursor()
-            cur.execute("SELECT id, telegram_id, username, phone, first_name, last_name FROM users WHERE id = ?", (user_id,))
+            cur.execute("SELECT id, telegram_id, username, phone, first_name, last_name, COALESCE(blocked,0) FROM users WHERE id = ?", (user_id,))
             return cur.fetchone()
 
     @staticmethod
     def get_by_username(username: str) -> Optional[Tuple]:
         with get_conn() as conn:
             cur = conn.cursor()
-            cur.execute("SELECT id, telegram_id, username, phone, first_name, last_name FROM users WHERE LOWER(username) = LOWER(?)", (username.lstrip('@'),))
+            cur.execute("SELECT id, telegram_id, username, phone, first_name, last_name, COALESCE(blocked,0) FROM users WHERE LOWER(username) = LOWER(?)", (username.lstrip('@'),))
             return cur.fetchone()
 
     @staticmethod
@@ -95,6 +95,58 @@ class UserRepo:
             cur.execute("SELECT telegram_id FROM users WHERE id = ?", (user_id,))
             row = cur.fetchone()
             return row[0] if row else None
+
+    @staticmethod
+    def search_users(query: str) -> List[Tuple]:
+        q = (query or '').strip().lower()
+        like = f"%{q}%"
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT id, telegram_id, username, phone, first_name, last_name, COALESCE(blocked,0)
+                FROM users
+                WHERE LOWER(COALESCE(first_name,'')) || ' ' || LOWER(COALESCE(last_name,'')) LIKE ?
+                   OR LOWER(COALESCE(username,'')) LIKE ?
+                   OR CAST(telegram_id AS TEXT) LIKE ?
+                ORDER BY id DESC
+                LIMIT 300
+                """,
+                (like, like, like)
+            )
+            return cur.fetchall()
+
+    @staticmethod
+    def list_with_groups() -> List[Tuple]:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT u.id, u.telegram_id, u.username, u.phone, u.first_name, u.last_name, COALESCE(u.blocked,0),
+                       COALESCE(GROUP_CONCAT(g.id || '::' || g.title || ' (' || ugr.role || ')', '\n'), '') AS groups
+                FROM users u
+                LEFT JOIN user_group_roles ugr ON ugr.user_id = u.id
+                LEFT JOIN groups g ON g.id = ugr.group_id
+                GROUP BY u.id
+                ORDER BY u.id DESC
+                LIMIT 300
+                """
+            )
+            return cur.fetchall()
+
+    @staticmethod
+    def set_blocked(user_id: int, blocked: bool) -> None:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("UPDATE users SET blocked = ? WHERE id = ?", (1 if blocked else 0, user_id))
+            conn.commit()
+
+    @staticmethod
+    def delete_user(user_id: int) -> None:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("DELETE FROM users WHERE id = ?", (user_id,))
+            conn.commit()
 
 
 class GroupRepo:
