@@ -36,36 +36,7 @@
 
       <div id="toast" class="toast" style="display: none;"></div>
 
-      <h3>Ответственный</h3>
-      {% if role in ['admin', 'owner', 'superadmin'] %}
-        <form method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/update{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">
-          <div class="form-row">
-            <div class="autocomplete-container">
-              <input class="autocomplete-input" type="text" placeholder="— ответственный —" 
-                     value="{% if event[4] %}{{ members|selectattr('0', 'equalto', event[4])|map(attribute='1')|first }}{% endif %}"
-                     data-user-id="{% if event[4] %}{{ event[4] }}{% else %}0{% endif %}"
-                     autocomplete="off">
-              <button type="button" class="autocomplete-clear" id="responsibleClear">✕</button>
-              <input type="hidden" name="responsible_user_id" value="{% if event[4] %}{{ event[4] }}{% else %}0{% endif %}">
-              <div class="autocomplete-dropdown" style="display: none;">
-                <div class="autocomplete-option" data-value="0">— ответственный —</div>
-              {% for uid, uname in members %}
-                  <div class="autocomplete-option" data-value="{{ uid }}">{{ uname if uname else 'ID: ' + uid|string }}</div>
-              {% endfor %}
-              </div>
-            </div>
-            <button class="btn" type="submit">Сохранить</button>
-          </div>
-        </form>
-      {% else %}
-        {% if event[4] %}
-          <div class="meta">Ответственный: {{ responsible_name or 'ID: ' + event[4]|string }}</div>
-        {% else %}
-          <form method="post" action="/group/{{ group[0] }}/events/{{ event[0] }}/book{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">
-            <button class="btn" type="submit">Забронировать</button>
-          </form>
-        {% endif %}
-      {% endif %}
+      <!-- Блок Ответственный убран. Используем только блок Роли. -->
 
       {% if role in ['admin', 'owner', 'superadmin'] %}
       <div class="form-row" style="margin-top:12px; flex-direction: column; align-items: stretch; gap:8px;">

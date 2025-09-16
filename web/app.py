@@ -14,7 +14,7 @@ import hashlib
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from services.repositories import UserRepo, GroupRepo, EventRepo, RoleRepo, PersonalEventNotificationRepo, NotificationRepo, BookingRepo, DisplayNameRepo, EventNotificationRepo, DispatchLogRepo, EventTemplateRepo, TemplateRoleRequirementRepo, TemplateGenerationRepo, TemplateGenerator, EventRoleRequirementRepo, get_conn
+from services.repositories import UserRepo, GroupRepo, EventRepo, RoleRepo, PersonalEventNotificationRepo, NotificationRepo, BookingRepo, DisplayNameRepo, EventNotificationRepo, DispatchLogRepo, EventTemplateRepo, TemplateRoleRequirementRepo, TemplateGenerationRepo, TemplateGenerator, EventRoleRequirementRepo, EventRoleAssignmentRepo, get_conn
 
 # Import test configuration from .env
 import os
@@ -407,6 +407,32 @@ async def group_view(request: Request, gid: int, tab: str = None, page: int = 1,
     
     for eid, name, time_str, resp_uid in events:
         disp, input_val = _format_time_display(time_str)
+        # Load roles and assignments for this event
+        try:
+            role_requirements = EventRoleRequirementRepo.list_for_event(eid)
+        except Exception:
+            role_requirements = []
+        try:
+            role_assignments = EventRoleAssignmentRepo.list_for_event(eid)
+        except Exception:
+            role_assignments = []
+        # Map role -> assigned user_id (first assignment if multiple present)
+        assignments_map = {}
+        for rname, uid in role_assignments:
+            if rname not in assignments_map:
+                assignments_map[rname] = uid
+        # Whether current user already has any role in this event
+        current_user_has_role = any(uid == user_id for _, uid in role_assignments)
+        # Read allow_multi_roles_per_user flag
+        allow_multi_roles_per_user = 0
+        try:
+            with get_conn() as conn:
+                cur = conn.cursor()
+                cur.execute("SELECT allow_multi_roles_per_user FROM events WHERE id = ?", (eid,))
+                row = cur.fetchone()
+                allow_multi_roles_per_user = row[0] if row else 0
+        except Exception:
+            allow_multi_roles_per_user = 0
         event_data = {
             'id': eid,
             'name': name,
@@ -415,6 +441,10 @@ async def group_view(request: Request, gid: int, tab: str = None, page: int = 1,
             'responsible_user_id': resp_uid,
             'responsible_name': member_name_map.get(resp_uid) if resp_uid is not None else None,
             'has_any_bookings': len(bookings_map.get(eid, [])) > 0,
+            'role_requirements': role_requirements,
+            'role_assignments': assignments_map,
+            'allow_multi_roles_per_user': allow_multi_roles_per_user,
+            'current_user_has_role': 1 if current_user_has_role else 0,
         }
         
         # Проверяем, прошло ли мероприятие
@@ -456,7 +486,7 @@ async def group_view(request: Request, gid: int, tab: str = None, page: int = 1,
     archived_events = archived_pagination['events']
     
     event_count = GroupRepo.count_group_events(gid)
-    return render('group.html', group=group, role=_role_label(role or 'participant'), is_admin=is_admin, active_events=active_events, archived_events=archived_events, active_pagination=active_pagination, archived_pagination=archived_pagination, booked_ids=booked_ids, responsible_ids=responsible_ids, display_name=display_name, bookings_map=bookings_map, member_options=member_options, event_count=event_count, active_tab=tab or 'active', current_page=page, per_page=per_page, request=request)
+    return render('group.html', group=group, role=_role_label(role or 'participant'), is_admin=is_admin, active_events=active_events, archived_events=archived_events, active_pagination=active_pagination, archived_pagination=archived_pagination, booked_ids=booked_ids, responsible_ids=responsible_ids, display_name=display_name, bookings_map=bookings_map, member_options=member_options, event_count=event_count, active_tab=tab or 'active', current_page=page, per_page=per_page, request=request, current_user_id=user_id)
 
 
 # --- Event CRUD ---
@@ -1354,6 +1384,78 @@ async def unbook_event(request: Request, gid: int, eid: int, tab: str | None = F
     
     return RedirectResponse(url=f"/group/{gid}{param_string}", status_code=303)
 
+
+@app.post('/group/{gid}/events/{eid}/roles/{role_name}/book')
+async def book_role(request: Request, gid: int, eid: int, role_name: str, tab: str | None = Form(None), page: int | None = Form(None), per_page: int | None = Form(None), selected_user_id: int | None = Form(None)):
+    urow = _require_user(request)
+    user_id = urow[0]
+
+    # Determine target user (admins can assign others)
+    user_role = RoleRepo.get_user_role(user_id, gid)
+    is_admin = user_role in ['admin', 'owner', 'superadmin']
+    target_user_id = selected_user_id if (is_admin and selected_user_id) else user_id
+
+    # Validate role exists for this event
+    reqs = {r: req for r, req in EventRoleRequirementRepo.list_for_event(eid)}
+    if role_name not in reqs:
+        return RedirectResponse(f"/group/{gid}?ok=booking_error", status_code=303)
+
+    # Check if role already assigned
+    assigned = {r: uid for r, uid in EventRoleAssignmentRepo.list_for_event(eid)}
+    if role_name in assigned and assigned[role_name]:
+        return RedirectResponse(f"/group/{gid}?ok=booking_error", status_code=303)
+
+    # Check allow_multi_roles_per_user
+    allow_multi = 0
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT allow_multi_roles_per_user FROM events WHERE id = ?", (eid,))
+        row = cur.fetchone()
+        allow_multi = row[0] if row else 0
+
+    if not allow_multi:
+        # ensure user has no other role in this event
+        for r, uid in assigned.items():
+            if uid == target_user_id:
+                return RedirectResponse(f"/group/{gid}?ok=booking_error", status_code=303)
+
+    ok = 'event_booked'
+    if EventRoleAssignmentRepo.assign(eid, role_name, target_user_id):
+        ok = 'event_booked'
+    else:
+        ok = 'booking_error'
+
+    params = []
+    if tab:
+        params.append(f"tab={tab}")
+    if page:
+        params.append(f"page={page}")
+    if per_page:
+        params.append(f"per_page={per_page}")
+    param_string = "&".join(params)
+    param_string = f"?ok={ok}&{param_string}" if param_string else f"?ok={ok}"
+    return RedirectResponse(f"/group/{gid}{param_string}", status_code=303)
+
+
+@app.post('/group/{gid}/events/{eid}/roles/{role_name}/unbook')
+async def unbook_role(request: Request, gid: int, eid: int, role_name: str, tab: str | None = Form(None), page: int | None = Form(None), per_page: int | None = Form(None)):
+    urow = _require_user(request)
+    user_id = urow[0]
+
+    ok = 'unbooked'
+    if not EventRoleAssignmentRepo.unassign(eid, role_name, user_id):
+        ok = 'booking_error'
+
+    params = []
+    if tab:
+        params.append(f"tab={tab}")
+    if page:
+        params.append(f"page={page}")
+    if per_page:
+        params.append(f"per_page={per_page}")
+    param_string = "&".join(params)
+    param_string = f"?ok={ok}&{param_string}" if param_string else f"?ok={ok}"
+    return RedirectResponse(f"/group/{gid}{param_string}", status_code=303)
 
 @app.post('/group/{gid}/display-name/set')
 async def set_display_name(request: Request, gid: int, display_name: str = Form(...)):

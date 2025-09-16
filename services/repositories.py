@@ -466,7 +466,7 @@ class EventRepo:
         with get_conn() as conn:
             cur = conn.cursor()
             cur.execute(
-                "SELECT id, name, time, group_id, responsible_user_id FROM events WHERE id = ?",
+                "SELECT id, name, time, group_id, responsible_user_id, allow_multi_roles_per_user FROM events WHERE id = ?",
                 (event_id,),
             )
             return cur.fetchone()
