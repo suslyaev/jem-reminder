@@ -1128,7 +1128,7 @@ async def cb_role_unbook(callback: types.CallbackQuery):
     user_id = urow[0] if urow else None
     if not user_id:
         return await callback.answer("Нет пользователя", show_alert=False)
-    from services.repositories import EventRoleAssignmentRepo, RoleRepo
+    from services.repositories import EventRoleAssignmentRepo, RoleRepo, PersonalEventNotificationRepo
     # Admins/owners can unassign any user; find current assignee for this role
     try:
         role = RoleRepo.get_user_role(user_id, gid_i)
@@ -1145,6 +1145,25 @@ async def cb_role_unbook(callback: types.CallbackQuery):
         except Exception:
             pass
     if EventRoleAssignmentRepo.unassign(eid_i, role_name, target_uid):
+        # Delete personal notifications only if user has no other roles in this event
+        try:
+            remaining = [uid for _r, uid in EventRoleAssignmentRepo.list_for_event(eid_i)]
+            if target_uid not in remaining:
+                PersonalEventNotificationRepo.delete_by_user_and_event(target_uid, eid_i)
+                # Defensive double-check
+                leftovers = []
+                try:
+                    from services.repositories import get_conn
+                    with get_conn() as conn:
+                        cur = conn.cursor()
+                        cur.execute("SELECT 1 FROM personal_event_notifications WHERE user_id=? AND event_id=? LIMIT 1", (target_uid, eid_i))
+                        leftovers = cur.fetchall()
+                except Exception:
+                    pass
+                if leftovers:
+                    PersonalEventNotificationRepo.delete_by_user_and_event(target_uid, eid_i)
+        except Exception:
+            pass
         await refresh_role_keyboard(callback.message, gid_i, eid_i)
     else:
         await callback.answer("Нельзя снять чужую бронь", show_alert=False)

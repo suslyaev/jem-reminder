@@ -1549,14 +1549,17 @@ async def book_role(request: Request, gid: int, eid: int, role_name: str, tab: s
     # Check whether user had any role before assignment
     had_any_role_before = any(uid == target_user_id for uid in assigned.values())
     if EventRoleAssignmentRepo.assign(eid, role_name, target_user_id):
-        # If it's the first role for this user on this event, create personal notifications from group templates
-        if not had_any_role_before:
-            try:
-                evt = EventRepo.get_by_id(eid)
-                group_id = evt[3] if evt else gid
-                PersonalEventNotificationRepo.create_from_personal_templates(eid, group_id, target_user_id)
-            except Exception:
-                pass
+        # Ensure personal notifications exist (idempotent) and booking recorded
+        try:
+            evt = EventRepo.get_by_id(eid)
+            group_id = evt[3] if evt else gid
+            PersonalEventNotificationRepo.create_from_personal_templates(eid, group_id, target_user_id)
+        except Exception:
+            pass
+        try:
+            BookingRepo.add_booking(target_user_id, eid)
+        except Exception:
+            pass
         ok = 'event_booked'
     else:
         ok = 'booking_error'
@@ -1597,11 +1600,18 @@ async def unbook_role(request: Request, gid: int, eid: int, role_name: str, tab:
     if not EventRoleAssignmentRepo.unassign(eid, role_name, target_uid):
         ok = 'booking_error'
     else:
-        # After unassign, if target user has no roles left for this event, delete their personal notifications
+        # After unassign, delete personal notifications only if user has no other roles in this event
         try:
             remaining = {r: uid for r, uid in EventRoleAssignmentRepo.list_for_event(eid)}
             if all(uid != target_uid for uid in remaining.values()):
                 PersonalEventNotificationRepo.delete_by_user_and_event(target_uid, eid)
+                # Defensive: verify removal; if still present, attempt once more
+                try:
+                    leftovers = PersonalEventNotificationRepo.list_by_user_and_event(target_uid, eid)
+                    if leftovers:
+                        PersonalEventNotificationRepo.delete_by_user_and_event(target_uid, eid)
+                except Exception:
+                    pass
         except Exception:
             pass
 
