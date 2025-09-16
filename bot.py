@@ -428,13 +428,7 @@ async def on_chat_member_update(event: ChatMemberUpdated):
             # If we know adder, grant owner role
             if owner_user_id is not None:
                 RoleRepo.add_role(owner_user_id, group_id, 'owner', confirmed=True)
-            # Add superadmin to the group as superadmin
-            try:
-                sa_row = UserRepo.get_by_telegram_id(SUPERADMIN_ID)
-                if sa_row:
-                    RoleRepo.add_role(sa_row[0], group_id, 'superadmin', confirmed=True)
-            except Exception:
-                pass
+            # Note: Do not auto-add superadmin to group membership
             # Default notifications
             NotificationRepo.ensure_defaults(group_id)
             await bot.send_message(event.chat.id, "Группа зарегистрирована. Настройки уведомлений по умолчанию созданы.")
@@ -2024,13 +2018,7 @@ def _register_group_if_needed_from_message(message: types.Message) -> None:
     )
     group_id = GroupRepo.create(chat_id, title, owner_user_id)
     RoleRepo.add_role(owner_user_id, group_id, 'owner', confirmed=True)
-    # Add superadmin to the group as superadmin
-    try:
-        sa_row = UserRepo.get_by_telegram_id(SUPERADMIN_ID)
-        if sa_row:
-            RoleRepo.add_role(sa_row[0], group_id, 'superadmin', confirmed=True)
-    except Exception:
-        pass
+    # Note: Do not auto-add superadmin to group membership
     NotificationRepo.ensure_defaults(group_id)
     logging.info(f"Auto-registered group {chat_id} by message from user {user.id}")
 

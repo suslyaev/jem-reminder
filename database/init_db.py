@@ -85,6 +85,22 @@ def apply_migrations(conn):
         print("  - Добавляем колонку 'blocked' в таблицу users...")
         cursor = conn.cursor()
         cursor.execute("ALTER TABLE users ADD COLUMN blocked INTEGER NOT NULL DEFAULT 0")
+
+    # Очистка номинальных членств суперадмина (если когда-то добавлялись автоматически)
+    try:
+        from config import SUPERADMIN_ID as CFG_SA
+    except Exception:
+        CFG_SA = None
+    if CFG_SA:
+        with sqlite3.connect(DB_PATH.as_posix()) as c2:
+            cur2 = c2.cursor()
+            cur2.execute("SELECT id FROM users WHERE telegram_id = ?", (CFG_SA,))
+            sa = cur2.fetchone()
+            if sa:
+                sa_uid = sa[0]
+                print("  - Удаляем автодобавленные записи суперадмина из user_group_roles (если есть)...")
+                cur2.execute("DELETE FROM user_group_roles WHERE user_id = ? AND role = 'superadmin'", (sa_uid,))
+                c2.commit()
     
     print("Миграции применены успешно!")
 

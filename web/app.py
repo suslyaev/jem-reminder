@@ -104,10 +104,19 @@ def _require_user(request: Request):
 
 
 def _require_admin(user_id: int, group_id: int):
+    # Allow by group role OR by global superadmin telegram id
     role = RoleRepo.get_user_role(user_id, group_id)
-    if role not in ("owner", "admin", "superadmin"):
-        raise HTTPException(status_code=403, detail="Admin permissions required")
-    return role
+    try:
+        from config import SUPERADMIN_ID as CFG_SA
+    except Exception:
+        CFG_SA = None
+    if role in ("owner", "admin", "superadmin"):
+        return role
+    # Check telegram id
+    u = UserRepo.get_by_id(user_id)
+    if u and CFG_SA and u[1] == CFG_SA:
+        return "superadmin"
+    raise HTTPException(status_code=403, detail="Admin permissions required")
 
 
 def _role_label(role: str | None) -> str:
@@ -306,12 +315,17 @@ async def index(request: Request):
             display = first_name or username or str(telegram_id)
             if first_name and last_name:
                 display = f"{first_name} {last_name}"
-            groups = GroupRepo.list_user_groups_with_roles(user_id)
+            # If superadmin, show all groups; else only groups with roles
+            is_super = (user_row[1] == SUPERADMIN_ID) if SUPERADMIN_ID else False
+            if is_super:
+                groups_all = GroupRepo.list_all()
+                groups = [(gid, title, 'superadmin', chat_id) for (gid, title, chat_id) in groups_all]
+            else:
+                groups = GroupRepo.list_user_groups_with_roles(user_id)
             groups_with_counts = []
             for gid, title, role, chat_id in groups:
                 groups_with_counts.append((gid, title, role, GroupRepo.count_group_events(gid), _role_label(role), chat_id))
             # If superadmin, also load users list for admin panel
-            is_super = (user_row[1] == SUPERADMIN_ID) if SUPERADMIN_ID else False
             users = []
             if is_super:
                 users = UserRepo.list_with_groups()
@@ -346,12 +360,17 @@ async def index(request: Request):
             display = first_name or username or str(telegram_id)
             if first_name and last_name:
                 display = f"{first_name} {last_name}"
-            groups = GroupRepo.list_user_groups_with_roles(user_id)
+            # If superadmin, show all groups; else only groups with roles
+            is_super = (user_row[1] == SUPERADMIN_ID) if SUPERADMIN_ID else False
+            if is_super:
+                groups_all = GroupRepo.list_all()
+                groups = [(gid, title, 'superadmin', chat_id) for (gid, title, chat_id) in groups_all]
+            else:
+                groups = GroupRepo.list_user_groups_with_roles(user_id)
             groups_with_counts = []
             for gid, title, role, chat_id in groups:
                 groups_with_counts.append((gid, title, role, GroupRepo.count_group_events(gid), _role_label(role), chat_id))
             # If superadmin, also load users list for admin panel
-            is_super = (user_row[1] == SUPERADMIN_ID) if SUPERADMIN_ID else False
             users = []
             if is_super:
                 users = UserRepo.list_with_groups()
@@ -371,7 +390,13 @@ async def group_view(request: Request, gid: int, tab: str = None, page: int = 1,
     urow = _require_user(request)
     user_id = urow[0]
     role = RoleRepo.get_user_role(user_id, gid)
-    if role is None:
+    # Superadmin bypass for access
+    try:
+        from config import SUPERADMIN_ID as CFG_SA
+    except Exception:
+        CFG_SA = None
+    is_superadmin_req = (urow[1] == CFG_SA) if CFG_SA else False
+    if role is None and not is_superadmin_req:
         events = EventRepo.list_by_group(gid)
         has_any = False
         for eid, _, _, _ in events:
@@ -386,7 +411,10 @@ async def group_view(request: Request, gid: int, tab: str = None, page: int = 1,
     display_name = DisplayNameRepo.get_display_name(gid, user_id)
     booked_ids = {eid for (eid, _, _, _) in events if BookingRepo.has_booking(user_id, eid)}
     responsible_ids = {eid for (eid, _, _, responsible_user_id) in events if responsible_user_id == user_id}
-    is_admin = (role in ("owner", "admin", "superadmin")) if role else False
+    # Treat superadmin as admin for UI
+    effective_role = role if role else ("superadmin" if is_superadmin_req else None)
+    # Global superadmin should also see admin UI
+    is_admin = (effective_role in ("owner", "admin", "superadmin")) if effective_role else is_superadmin_req
     bookings_map = {eid: BookingRepo.list_event_bookings_with_names(gid, eid) for (eid, _, _, _) in events}
     member_rows = GroupRepo.list_group_members(gid)
     member_name_map: dict[int, str] = {}
@@ -550,7 +578,7 @@ async def group_view(request: Request, gid: int, tab: str = None, page: int = 1,
     archived_events = archived_pagination['events']
     
     event_count = GroupRepo.count_group_events(gid)
-    return render('group.html', group=group, role=_role_label(role or 'participant'), is_admin=is_admin, active_events=active_events, archived_events=archived_events, active_pagination=active_pagination, archived_pagination=archived_pagination, booked_ids=booked_ids, responsible_ids=responsible_ids, display_name=display_name, bookings_map=bookings_map, member_options=member_options, member_name_map=member_name_map, event_count=event_count, active_tab=tab or 'active', current_page=page, per_page=per_page, request=request, current_user_id=user_id, audit_labels=audit_labels)
+    return render('group.html', group=group, role=(effective_role or 'participant'), is_admin=is_admin, active_events=active_events, archived_events=archived_events, active_pagination=active_pagination, archived_pagination=archived_pagination, booked_ids=booked_ids, responsible_ids=responsible_ids, display_name=display_name, bookings_map=bookings_map, member_options=member_options, member_name_map=member_name_map, event_count=event_count, active_tab=tab or 'active', current_page=page, per_page=per_page, request=request, current_user_id=user_id, audit_labels=audit_labels)
 
 
 # --- Event CRUD ---
@@ -679,20 +707,25 @@ async def update_event_from_card(request: Request, gid: int, eid: int, name: str
 async def group_settings(request: Request, gid: int):
     urow = _require_user(request)
     user_id = urow[0]
-    # Allow all users to see settings; restrict admin functions by role
+    # Allow all users to see settings; restrict admin functions by role / global superadmin
     role = RoleRepo.get_user_role(user_id, gid)
+    try:
+        from config import SUPERADMIN_ID as CFG_SA
+    except Exception:
+        CFG_SA = None
+    is_super = (urow[1] == CFG_SA) if CFG_SA else False
     group = GroupRepo.get_by_id(gid)
-    notifications = NotificationRepo.list_notifications(gid) if role in ['admin', 'owner', 'superadmin'] else []
+    notifications = NotificationRepo.list_notifications(gid) if (role in ['admin', 'owner', 'superadmin'] or is_super) else []
     # Load personal notification templates for this group
-    personal_notifications = NotificationRepo.list_personal_notifications(gid) if role in ['admin', 'owner', 'superadmin'] else []
-    pending = RoleRepo.list_pending_admins(gid) if role in ['admin', 'owner', 'superadmin'] else []
-    admins = GroupRepo.list_group_admins(gid) if role in ['admin', 'owner', 'superadmin'] else []
-    members = GroupRepo.list_group_members_detailed(gid) if role in ['admin', 'owner', 'superadmin'] else []
+    personal_notifications = NotificationRepo.list_personal_notifications(gid) if (role in ['admin', 'owner', 'superadmin'] or is_super) else []
+    pending = RoleRepo.list_pending_admins(gid) if (role in ['admin', 'owner', 'superadmin'] or is_super) else []
+    admins = GroupRepo.list_group_admins(gid) if (role in ['admin', 'owner', 'superadmin'] or is_super) else []
+    members = GroupRepo.list_group_members_detailed(gid) if (role in ['admin', 'owner', 'superadmin'] or is_super) else []
     current_display_name = DisplayNameRepo.get_display_name(gid, user_id)
     
     # Filter out superadmin if current user is not superadmin
     # Check if current user is superadmin by telegram_id
-    is_superadmin = urow[1] == SUPERADMIN_ID  # urow[1] is telegram_id
+    is_superadmin = is_super
     if not is_superadmin:
         members = [m for m in members if m[6] != 'superadmin']
     
@@ -709,7 +742,8 @@ async def group_settings(request: Request, gid: int):
     event_count = GroupRepo.count_group_events(gid)
     notifications_count = len(notifications)
     personal_notifications_count = len(personal_notifications)
-    return render('group_settings.html', group=group, role=role, notifications=notifications, personal_notifications=personal_notifications, pending=pending, admins=admins, members=members, current_display_name=current_display_name, member_display_names=member_display_names, role_map=role_map, event_count=event_count, notifications_count=notifications_count, personal_notifications_count=personal_notifications_count, request=request)
+    effective_role = 'superadmin' if is_super else role
+    return render('group_settings.html', group=group, role=effective_role, notifications=notifications, personal_notifications=personal_notifications, pending=pending, admins=admins, members=members, current_display_name=current_display_name, member_display_names=member_display_names, role_map=role_map, event_count=event_count, notifications_count=notifications_count, personal_notifications_count=personal_notifications_count, request=request)
 
 
 @app.post('/group/{gid}/settings/notifications/add')
@@ -936,8 +970,14 @@ async def event_settings(request: Request, gid: int, eid: int):
     
     # Check if user has access (admin or participant with booking)
     role = RoleRepo.get_user_role(user_id, gid)
+    # Global superadmin bypass
+    try:
+        from config import SUPERADMIN_ID as CFG_SA
+    except Exception:
+        CFG_SA = None
+    is_super = (urow[1] == CFG_SA) if CFG_SA else False
     # Allow: admins/owner/superadmin OR any group member OR anyone who has a booking on this event
-    if role is None and not BookingRepo.has_booking(user_id, eid):
+    if (role is None and not BookingRepo.has_booking(user_id, eid)) and not is_super:
         raise HTTPException(status_code=403, detail="Access denied")
     
     group = GroupRepo.get_by_id(gid)
@@ -1093,7 +1133,9 @@ async def event_settings(request: Request, gid: int, eid: int):
     except Exception:
         audit_info = {'created_by': '—', 'updated_by': '—', 'updated_at': '—'}
 
-    return render('event_settings.html', group=group, event=event, members=member_options, event_notifications=event_notifications, personal_notifications=personal_notifications, event_notifications_sent=event_notifications_sent, personal_notifications_sent_map=personal_notifications_sent_map, role=role, responsible_name=responsible_name, event_time_display=event_time_display, current_user_telegram_id=current_user_telegram_id, current_user_display_name=current_user_display_name, _calculate_notification_time=_calculate_notification_time, request=request, template_info=template_info, template_row=template_row, template_roles=template_roles, event_roles=event_roles, audit_info=audit_info)
+    # If global superadmin, force role label to superadmin for UI sections
+    effective_role = 'superadmin' if is_super else role
+    return render('event_settings.html', group=group, event=event, members=member_options, event_notifications=event_notifications, personal_notifications=personal_notifications, event_notifications_sent=event_notifications_sent, personal_notifications_sent_map=personal_notifications_sent_map, role=effective_role, responsible_name=responsible_name, event_time_display=event_time_display, current_user_telegram_id=current_user_telegram_id, current_user_display_name=current_user_display_name, _calculate_notification_time=_calculate_notification_time, request=request, template_info=template_info, template_row=template_row, template_roles=template_roles, event_roles=event_roles, audit_info=audit_info)
 
 
 @app.post('/group/{gid}/events/{eid}/notifications/add')
