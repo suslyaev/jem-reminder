@@ -1712,12 +1712,12 @@ async def remove_member(request: Request, gid: int, uid: int):
 async def add_group_member(request: Request, gid: int, identifier_type: str = Form(...), identifier: str = Form(...)):
     urow = _require_user(request)
     user_id = urow[0]
-    # Only owner or superadmin can add members this way
+    # Owners, admins, or superadmins can add members
     role = RoleRepo.get_user_role(user_id, gid)
     from config import SUPERADMIN_ID
     is_super = (urow[1] == SUPERADMIN_ID)
-    if role not in ['owner'] and not is_super:
-        raise HTTPException(status_code=403, detail="Only owner or superadmin can add members")
+    if role not in ['owner', 'admin'] and not is_super:
+        raise HTTPException(status_code=403, detail="Only owner, admin or superadmin can add members")
 
     identifier_type = (identifier_type or '').strip().lower()
     value = (identifier or '').strip()

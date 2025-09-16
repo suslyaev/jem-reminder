@@ -450,7 +450,51 @@
               <div id="archivedEventsList">
                 {% for e in archived_events %}
               <div class="event-card archived-event" data-name="{{ e.name.lower() }}" data-date="{{ e.time_display.lower() }}" data-responsible="{{ e.responsible_name.lower() if e.responsible_name else '' }}">
-                <!-- Название и дата (read-only) -->
+              {% if is_admin %}
+                <form method="post" action="/group/{{ group[0] }}/events/{{ e.id }}/update-from-card{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">
+                  <!-- Первая строка: название и удаление -->
+                  <div class="row" style="margin-bottom: 8px; width: 100%; justify-content: space-between;">
+                    <input class="name-input" type="text" name="name" placeholder="Название" value="{{ e.name }}" style="flex: 1; margin-right: 8px;" />
+                    <button class="btn" type="button" onclick="deleteEvent({{ e.id }})" style="background: var(--danger); color: white; border: none; border-radius: 4px; padding: 8px 12px; cursor: pointer; font-size: 16px;">✕</button>
+                  </div>
+                  
+                  <!-- Вторая строка: дата и время -->
+                  <div class="row" style="margin-bottom: 12px; width: 100%;">
+                    <input class="time-input" type="datetime-local" name="time" value="{{ e.time_input }}" style="flex: 1; margin-right: 8px; max-width: 180px;" />
+                  </div>
+
+                  {% if e.role_requirements and e.role_requirements|length > 0 %}
+                  <div class="row" style="flex-direction: column; align-items: stretch; gap: 6px;">
+                    {% for rname, req in e.role_requirements %}
+                      <div class="row" style="gap: 8px; align-items: center;">
+                        <div style="min-width: 120px; color: var(--muted);">{{ rname }}</div>
+                        {% set assigned_uid = e.role_assignments.get(rname) %}
+                        <div class="autocomplete-container" style="flex: 1;">
+                          {% if assigned_uid %}
+                            <input class="autocomplete-input" type="text" value="{{ e.role_assignment_labels.get(rname, member_name_map.get(assigned_uid, 'ID: ' ~ assigned_uid)) }}" disabled>
+                          {% else %}
+                            <input class="autocomplete-input" type="text" value="Свободно" disabled>
+                          {% endif %}
+                        </div>
+                      </div>
+                    {% endfor %}
+                  </div>
+                  {% endif %}
+                  
+                  <!-- Кнопки: слева - сохранить, справа - настройки -->
+                  <div class="actions" style="justify-content: space-between; margin-top: 8px;">
+                    <div style="display: flex; gap: 8px;">
+                      <button class="btn" type="submit">Сохранить</button>
+                    </div>
+                    <a class="gear-inline" href="/group/{{ group[0] }}/events/{{ e.id }}/settings{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Настройки оповещений" style="text-decoration: none; padding: 8px 12px; background: var(--primary); color: white; border-radius: 6px; font-size: 16px; border: none; cursor: pointer; display: inline-block; text-align: center; min-width: 40px;">🔔</a>
+                  </div>
+                  <!-- Скрытые поля для параметров пагинации -->
+                  <input type="hidden" name="tab" value="{{ active_tab }}">
+                  <input type="hidden" name="page" value="{{ current_page }}">
+                  <input type="hidden" name="per_page" value="{{ per_page }}">
+                </form>
+              {% else %}
+                <!-- Название и дата (read-only) для участников -->
                 <div class="row" style="margin-bottom: 8px; width: 100%; justify-content: space-between;">
                   <input class="name-input" type="text" placeholder="Название" value="{{ e.name }}" style="flex: 1; margin-right: 8px;" disabled />
                 </div>
@@ -473,6 +517,7 @@
                 <div class="actions" style="justify-content: flex-end; margin-top: 8px;">
                   <a class="gear-inline" href="/group/{{ group[0] }}/events/{{ e.id }}/settings{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Настройки оповещений" style="text-decoration: none; padding: 8px 12px; background: var(--primary); color: white; border-radius: 6px; font-size: 16px; border: none; cursor: pointer; display: inline-block; text-align: center; min-width: 40px;">🔔</a>
                 </div>
+              {% endif %}
               </div>
                 {% endfor %}
               </div>
