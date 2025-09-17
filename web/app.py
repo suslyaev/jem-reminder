@@ -15,6 +15,7 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from services.repositories import UserRepo, GroupRepo, EventRepo, RoleRepo, PersonalEventNotificationRepo, NotificationRepo, BookingRepo, DisplayNameRepo, EventNotificationRepo, DispatchLogRepo, EventTemplateRepo, TemplateRoleRequirementRepo, TemplateGenerationRepo, TemplateGenerator, EventRoleRequirementRepo, EventRoleAssignmentRepo, get_conn
+from services.repositories import AuditLogRepo
 
 # Import test configuration from .env
 import os
@@ -348,12 +349,111 @@ async def index(request: Request):
             users = []
             if is_super:
                 users = UserRepo.list_with_groups()
+            # Load audit if superadmin and tab=audit
+            audit_rows = []
+            audit_total = 0
+            audit_page = int(request.query_params.get('page') or 1)
+            audit_per_page = int(request.query_params.get('per_page') or 50)
+            audit_filters = {'group_id': request.query_params.get('group_id'), 'event_id': request.query_params.get('event_id')}
+            if is_super and (request.query_params.get('tab') == 'audit'):
+                try:
+                    from services.repositories import AuditLogRepo
+                    # Load groups list
+                    groups_all = GroupRepo.list_all()
+                    audit_groups = [(gid, title) for (gid, title, _chat) in groups_all]
+                    # Load events for selected group
+                    audit_events = []
+                    gflt = int(audit_filters['group_id']) if audit_filters['group_id'] else None
+                    eflt = int(audit_filters['event_id']) if audit_filters['event_id'] else None
+                    if gflt:
+                        try:
+                            evs = EventRepo.list_by_group(gflt)
+                            audit_events = [(eid, name) for (eid, name, _t, _r) in evs]
+                        except Exception:
+                            audit_events = []
+                    (audit_rows, audit_total) = AuditLogRepo.list(page=audit_page, per_page=audit_per_page, group_id=gflt, event_id=eflt)
+                    # Enrich rows for display
+                    def _fmt_ts(s: str) -> str:
+                        from datetime import datetime as _dt
+                        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+                            try:
+                                return _dt.strptime(s, fmt).strftime("%d.%m.%Y %H:%M:%S")
+                            except Exception:
+                                continue
+                        return s
+                    audit_items = []
+                    action_map = {
+                        'event_created': 'Создано мероприятие',
+                        'event_name_updated': 'Изменено название мероприятия',
+                        'event_time_updated': 'Изменено время мероприятия',
+                        'event_responsible_updated': 'Изменён ответственный',
+                        'event_deleted': 'Удалено мероприятие',
+                        'event_booked': 'Забронировано мероприятие',
+                        'event_unbooked': 'Отмена брони мероприятия',
+                        'notify_group': 'Отправлено групповое сообщение',
+                        'notify_personal': 'Отправлено личное сообщение',
+                        'personal_notification_created': 'Создано личное оповещение',
+                        'group_notification_deleted': 'Удалён шаблон группового оповещения',
+                        'member_display_name_updated': 'Изменено отображаемое имя участника',
+                        'member_role_updated': 'Изменена роль участника',
+                        'member_removed': 'Удалён участник из группы',
+                        'member_added': 'Добавлен участник в группу',
+                        'group_deleted': 'Удалена группа',
+                    }
+                    for (_id, created_at, uid, action, gid_a, eid_a, oldv, newv) in audit_rows:
+                        # user label
+                        user_label = str(uid) if uid else '—'
+                        user_tid = None
+                        try:
+                            u = UserRepo.get_by_id(uid) if uid else None
+                            if u:
+                                _iid, _tid, _uname, _phone, _first, _last, *_rest = u
+                                user_tid = _tid
+                                disp = (_first or '')
+                                if _last:
+                                    disp = f"{disp} {_last}".strip()
+                                if not disp:
+                                    disp = f"@{_uname}" if _uname else (str(_tid) if _tid else str(uid))
+                                user_label = f"{disp} ({_tid})" if _tid else disp
+                        except Exception:
+                            pass
+                        # group
+                        group_title = None
+                        try:
+                            g = GroupRepo.get_by_id(gid_a) if gid_a else None
+                            group_title = g[2] if g else None
+                        except Exception:
+                            group_title = None
+                        # event
+                        event_name = None
+                        try:
+                            ev = EventRepo.get_by_id(eid_a) if eid_a else None
+                            event_name = ev[1] if ev else None
+                        except Exception:
+                            event_name = None
+                        audit_items.append({
+                            'id': _id,
+                            'ts': _fmt_ts(created_at),
+                            'action': action,
+                            'action_ru': action_map.get(action, action),
+                            'user_label': user_label,
+                            'group_id': gid_a,
+                            'group_title': group_title,
+                            'event_id': eid_a,
+                            'event_name': event_name,
+                            'old': oldv,
+                            'new': newv,
+                        })
+                except Exception:
+                    audit_rows, audit_total = [], 0
+                    audit_groups, audit_events = [], []
+                    audit_items = []
             return render('index.html', groups=groups_with_counts, user_info={
                 'display': display,
                 'username': username,
                 'telegram_id': telegram_id,
                 'phone': phone,
-            }, users=users, is_superadmin=is_super, request=request)
+            }, users=users, is_superadmin=is_super, audit_rows=audit_rows, audit_items=(audit_items if (request.query_params.get('tab') == 'audit') else []), audit_total=audit_total, audit_page=audit_page, audit_per_page=audit_per_page, audit_filters=audit_filters, audit_groups=(audit_groups if (request.query_params.get('tab') == 'audit') else []), audit_events=(audit_events if (request.query_params.get('tab') == 'audit') else []), request=request)
     
     # Если данные из Telegram не пришли, пробуем из переменных окружения
     if TEST_TELEGRAM_ID:
@@ -400,12 +500,102 @@ async def index(request: Request):
             users = []
             if is_super:
                 users = UserRepo.list_with_groups()
+            audit_rows = []
+            audit_total = 0
+            audit_page = int(request.query_params.get('page') or 1)
+            audit_per_page = int(request.query_params.get('per_page') or 50)
+            audit_filters = {'group_id': request.query_params.get('group_id'), 'event_id': request.query_params.get('event_id')}
+            if is_super and (request.query_params.get('tab') == 'audit'):
+                try:
+                    from services.repositories import AuditLogRepo
+                    groups_all = GroupRepo.list_all()
+                    audit_groups = [(gid, title) for (gid, title, _chat) in groups_all]
+                    audit_events = []
+                    gflt = int(audit_filters['group_id']) if audit_filters['group_id'] else None
+                    eflt = int(audit_filters['event_id']) if audit_filters['event_id'] else None
+                    if gflt:
+                        try:
+                            evs = EventRepo.list_by_group(gflt)
+                            audit_events = [(eid, name) for (eid, name, _t, _r) in evs]
+                        except Exception:
+                            audit_events = []
+                    (audit_rows, audit_total) = AuditLogRepo.list(page=audit_page, per_page=audit_per_page, group_id=gflt, event_id=eflt)
+                    def _fmt_ts(s: str) -> str:
+                        from datetime import datetime as _dt
+                        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+                            try:
+                                return _dt.strptime(s, fmt).strftime("%d.%m.%Y %H:%M:%S")
+                            except Exception:
+                                continue
+                        return s
+                    audit_items = []
+                    action_map = {
+                        'event_created': 'Создано мероприятие',
+                        'event_name_updated': 'Изменено название мероприятия',
+                        'event_time_updated': 'Изменено время мероприятия',
+                        'event_responsible_updated': 'Изменён ответственный',
+                        'event_deleted': 'Удалено мероприятие',
+                        'event_booked': 'Забронировано мероприятие',
+                        'event_unbooked': 'Отмена брони мероприятия',
+                        'notify_group': 'Отправлено групповое сообщение',
+                        'notify_personal': 'Отправлено личное сообщение',
+                        'personal_notification_created': 'Создано личное оповещение',
+                        'group_notification_deleted': 'Удалён шаблон группового оповещения',
+                        'member_display_name_updated': 'Изменено отображаемое имя участника',
+                        'member_role_updated': 'Изменена роль участника',
+                        'member_removed': 'Удалён участник из группы',
+                        'member_added': 'Добавлен участник в группу',
+                        'group_deleted': 'Удалена группа',
+                    }
+                    for (_id, created_at, uid, action, gid_a, eid_a, oldv, newv) in audit_rows:
+                        user_label = str(uid) if uid else '—'
+                        try:
+                            u = UserRepo.get_by_id(uid) if uid else None
+                            if u:
+                                _iid, _tid, _uname, _phone, _first, _last, *_rest = u
+                                disp = (_first or '')
+                                if _last:
+                                    disp = f"{disp} {_last}".strip()
+                                if not disp:
+                                    disp = f"@{_uname}" if _uname else (str(_tid) if _tid else str(uid))
+                                user_label = f"{disp} ({_tid})" if _tid else disp
+                        except Exception:
+                            pass
+                        group_title = None
+                        try:
+                            g = GroupRepo.get_by_id(gid_a) if gid_a else None
+                            group_title = g[2] if g else None
+                        except Exception:
+                            group_title = None
+                        event_name = None
+                        try:
+                            ev = EventRepo.get_by_id(eid_a) if eid_a else None
+                            event_name = ev[1] if ev else None
+                        except Exception:
+                            event_name = None
+                        audit_items.append({
+                            'id': _id,
+                            'ts': _fmt_ts(created_at),
+                            'action': action,
+                            'action_ru': action_map.get(action, action),
+                            'user_label': user_label,
+                            'group_id': gid_a,
+                            'group_title': group_title,
+                            'event_id': eid_a,
+                            'event_name': event_name,
+                            'old': oldv,
+                            'new': newv,
+                        })
+                except Exception:
+                    audit_rows, audit_total = [], 0
+                    audit_groups, audit_events = [], []
+                    audit_items = []
             return render('index.html', groups=groups_with_counts, user_info={
                 'display': display,
                 'username': username,
                 'telegram_id': telegram_id,
                 'phone': phone,
-            }, users=users, is_superadmin=is_super, request=request)
+            }, users=users, is_superadmin=is_super, audit_rows=audit_rows, audit_items=(audit_items if (request.query_params.get('tab') == 'audit') else []), audit_total=audit_total, audit_page=audit_page, audit_per_page=audit_per_page, audit_filters=audit_filters, audit_groups=(audit_groups if (request.query_params.get('tab') == 'audit') else []), audit_events=(audit_events if (request.query_params.get('tab') == 'audit') else []), request=request)
     
     # Если ничего не получилось, показываем стартовую страницу
     return render('welcome.html', message="Требуется авторизация", user_info=None, request=request)
@@ -538,7 +728,8 @@ async def group_view(request: Request, gid: int, tab: str = None, page: int = 1,
                 return dn
             u = UserRepo.get_by_id(uid)
             if u:
-                _iid, _tid, _uname, _phone, _first, _last = u
+                # Some versions return 7 fields (including blocked). Accept extra.
+                _iid, _tid, _uname, _phone, _first, _last, *_rest = u
                 if _uname:
                     return f"@{_uname}"
                 if _first or _last:
@@ -624,6 +815,10 @@ async def create_event(request: Request, gid: int, name: str = Form(...), time: 
     _require_admin(user_id, gid)
     norm_time = _normalize_dt_local(time)
     new_eid = EventRepo.create(gid, name, norm_time or time, created_by_user_id=user_id)
+    try:
+        AuditLogRepo.add('event_created', user_id=user_id, group_id=gid, event_id=new_eid, new_value=name)
+    except Exception:
+        pass
     # Create event notifications from group defaults
     EventNotificationRepo.create_from_group_defaults(new_eid, gid)
     # Apply group role templates
@@ -656,6 +851,10 @@ async def create_events_multiple(request: Request, gid: int, items: str | None =
                 continue
             if t and n:
                 eid = EventRepo.create(gid, n, t, created_by_user_id=user_id)
+                try:
+                    AuditLogRepo.add('event_created', user_id=user_id, group_id=gid, event_id=eid, new_value=n)
+                except Exception:
+                    pass
                 EventNotificationRepo.create_from_group_defaults(eid, gid)
                 # Apply group role templates
                 try:
@@ -668,6 +867,10 @@ async def create_events_multiple(request: Request, gid: int, items: str | None =
                 created_any = True
             elif t:
                 eid = EventRepo.create(gid, f"Событие {t}", t, created_by_user_id=user_id)
+                try:
+                    AuditLogRepo.add('event_created', user_id=user_id, group_id=gid, event_id=eid, new_value=f"Событие {t}")
+                except Exception:
+                    pass
                 EventNotificationRepo.create_from_group_defaults(eid, gid)
                 try:
                     from services.repositories import GroupRoleTemplateRepo
@@ -686,6 +889,10 @@ async def create_events_multiple(request: Request, gid: int, items: str | None =
             if '|' in line:
                 time_part, name_part = line.split('|', 1)
                 eid = EventRepo.create(gid, name_part.strip(), _normalize_dt_local(time_part.strip()) or time_part.strip(), created_by_user_id=user_id)
+                try:
+                    AuditLogRepo.add('event_created', user_id=user_id, group_id=gid, event_id=eid, new_value=name_part.strip())
+                except Exception:
+                    pass
                 EventNotificationRepo.create_from_group_defaults(eid, gid)
                 try:
                     from services.repositories import GroupRoleTemplateRepo
@@ -698,6 +905,10 @@ async def create_events_multiple(request: Request, gid: int, items: str | None =
             else:
                 t = _normalize_dt_local(line.strip()) or line.strip()
                 eid = EventRepo.create(gid, f"Событие {t}", t, created_by_user_id=user_id)
+                try:
+                    AuditLogRepo.add('event_created', user_id=user_id, group_id=gid, event_id=eid, new_value=f"Событие {t}")
+                except Exception:
+                    pass
                 EventNotificationRepo.create_from_group_defaults(eid, gid)
                 try:
                     from services.repositories import GroupRoleTemplateRepo
@@ -717,9 +928,30 @@ async def update_event(request: Request, gid: int, eid: int, name: str | None = 
     user_id = urow[0]
     _require_admin(user_id, gid)
     if name is not None and name != "":
+        try:
+            old = EventRepo.get_by_id(eid)
+            old_name = old[1] if old else None
+        except Exception:
+            old_name = None
         EventRepo.update_name(eid, name, updated_by_user_id=user_id)
+        try:
+            if (old_name or '') != (name or ''):
+                AuditLogRepo.add('event_name_updated', user_id=user_id, group_id=gid, event_id=eid, old_value=old_name, new_value=name)
+        except Exception:
+            pass
     if time is not None and time != "":
-        EventRepo.update_time(eid, _normalize_dt_local(time) or time, updated_by_user_id=user_id)
+        try:
+            old = EventRepo.get_by_id(eid)
+            old_time = old[2] if old else None
+        except Exception:
+            old_time = None
+        new_time = _normalize_dt_local(time) or time
+        EventRepo.update_time(eid, new_time, updated_by_user_id=user_id)
+        try:
+            if (old_time or '') != (new_time or ''):
+                AuditLogRepo.add('event_time_updated', user_id=user_id, group_id=gid, event_id=eid, old_value=old_time, new_value=new_time)
+        except Exception:
+            pass
     if responsible_user_id is not None:
         # Get current responsible user before updating
         event = EventRepo.get_by_id(eid)
@@ -728,6 +960,11 @@ async def update_event(request: Request, gid: int, eid: int, name: str | None = 
         # Update responsible user
         new_responsible = responsible_user_id if responsible_user_id != 0 else None
         EventRepo.set_responsible(eid, new_responsible)
+        try:
+            if (old_responsible or None) != (new_responsible or None):
+                AuditLogRepo.add('event_responsible_updated', user_id=user_id, group_id=gid, event_id=eid, old_value=str(old_responsible or ''), new_value=str(new_responsible or ''))
+        except Exception:
+            pass
         
         # Update personal notifications
         PersonalEventNotificationRepo.update_user_for_event(eid, old_responsible, new_responsible, gid)
@@ -740,9 +977,30 @@ async def update_event_from_card(request: Request, gid: int, eid: int, name: str
     user_id = urow[0]
     _require_admin(user_id, gid)
     if name is not None and name != "":
+        try:
+            old = EventRepo.get_by_id(eid)
+            old_name = old[1] if old else None
+        except Exception:
+            old_name = None
         EventRepo.update_name(eid, name, updated_by_user_id=user_id)
+        try:
+            if (old_name or '') != (name or ''):
+                AuditLogRepo.add('event_name_updated', user_id=user_id, group_id=gid, event_id=eid, old_value=old_name, new_value=name)
+        except Exception:
+            pass
     if time is not None and time != "":
-        EventRepo.update_time(eid, _normalize_dt_local(time) or time, updated_by_user_id=user_id)
+        try:
+            old = EventRepo.get_by_id(eid)
+            old_time = old[2] if old else None
+        except Exception:
+            old_time = None
+        new_time = _normalize_dt_local(time) or time
+        EventRepo.update_time(eid, new_time, updated_by_user_id=user_id)
+        try:
+            if (old_time or '') != (new_time or ''):
+                AuditLogRepo.add('event_time_updated', user_id=user_id, group_id=gid, event_id=eid, old_value=old_time, new_value=new_time)
+        except Exception:
+            pass
     if responsible_user_id is not None:
         # Get current responsible user before updating
         event = EventRepo.get_by_id(eid)
@@ -751,6 +1009,11 @@ async def update_event_from_card(request: Request, gid: int, eid: int, name: str
         # Update responsible user
         new_responsible = responsible_user_id if responsible_user_id != 0 else None
         EventRepo.set_responsible(eid, new_responsible)
+        try:
+            if (old_responsible or None) != (new_responsible or None):
+                AuditLogRepo.add('event_responsible_updated', user_id=user_id, group_id=gid, event_id=eid, old_value=str(old_responsible or ''), new_value=str(new_responsible or ''))
+        except Exception:
+            pass
         
         # Update personal notifications
         PersonalEventNotificationRepo.update_user_for_event(eid, old_responsible, new_responsible, gid)
@@ -916,6 +1179,10 @@ async def add_personal_notification_text(request: Request, gid: int, notificatio
     
     # Add personal notification template
     NotificationRepo.add_notification(gid, time_before, time_unit, final_message_text, notification_type='personal')
+    try:
+        AuditLogRepo.add('personal_notification_created', user_id=user_id, group_id=gid, new_value=f"{time_before} {time_unit} | {final_message_text or ''}")
+    except Exception:
+        pass
     tab_param = f"&tab={tab}" if tab else "&tab=personal"
     return RedirectResponse(f"/group/{gid}/settings?ok=personal_notification_added&tg_id={tg_id}{tab_param}", status_code=303)
 
@@ -964,6 +1231,10 @@ async def send_message_to_user(request: Request, gid: int, recipient_id: int = F
         # Import bot here to avoid circular imports
         from bot import bot
         await bot.send_message(recipient_telegram_id, message)
+        try:
+            AuditLogRepo.add('notify_personal', user_id=user_id, group_id=gid, new_value=message)
+        except Exception:
+            pass
         return {"success": True}
     except Exception as e:
         return {"success": False, "error": f"Ошибка отправки: {str(e)}"}
@@ -992,6 +1263,10 @@ async def send_message_to_group(request: Request, gid: int, message: str = Form(
         chat_id = int(group[1])
         print(f"Attempting to send message to chat_id: {chat_id}, message: {message}")
         await bot.send_message(chat_id, message)
+        try:
+            AuditLogRepo.add('notify_group', user_id=user_id, group_id=gid, new_value=message)
+        except Exception:
+            pass
         return {"success": True}
     except Exception as e:
         print(f"Error sending message: {str(e)}")
@@ -1004,7 +1279,11 @@ async def delete_group_notification(request: Request, gid: int, nid: int, tab: s
     urow = _require_user(request)
     user_id = urow[0]
     _require_admin(user_id, gid)
-    NotificationRepo.delete_notification(nid)
+    try:
+        NotificationRepo.delete_notification(nid)
+        AuditLogRepo.add('group_notification_deleted', user_id=user_id, group_id=gid, old_value=str(nid))
+    except Exception:
+        pass
     tab_param = f"&tab={tab}" if tab else ""
     return RedirectResponse(url=f"/group/{gid}/settings?ok=notification_deleted&tg_id={tg_id}{tab_param}", status_code=303)
 @app.post('/admin/users/{uid}/block')
@@ -1547,6 +1826,38 @@ async def update_event_roles(request: Request, gid: int, eid: int, allow_multi_r
     role = RoleRepo.get_user_role(user_id, gid)
     if role not in ['admin', 'owner', 'superadmin']:
         raise HTTPException(status_code=403, detail="Access denied")
+    # Update event flag
+    try:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("UPDATE events SET allow_multi_roles_per_user = ? WHERE id = ?", (1 if allow_multi_roles_per_user else 0, eid))
+            conn.commit()
+    except Exception:
+        pass
+    # Replace roles if provided
+    if role_names is not None:
+        names = [n.strip() for n in role_names if n and n.strip()]
+        try:
+            EventRoleRequirementRepo.replace_for_event(eid, names)
+        except Exception:
+            pass
+    return RedirectResponse(f"/group/{gid}/events/{eid}/settings?ok=updated", status_code=303)
+@app.post('/admin/audit/{aid}/delete')
+async def admin_audit_delete(request: Request, aid: int):
+    urow = _require_user(request)
+    # Only superadmin
+    if urow[1] != SUPERADMIN_ID:
+        raise HTTPException(status_code=403, detail="Only superadmin")
+    try:
+        AuditLogRepo.delete(aid)
+        return {"success": True}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    urow = _require_user(request)
+    user_id = urow[0]
+    role = RoleRepo.get_user_role(user_id, gid)
+    if role not in ['admin', 'owner', 'superadmin']:
+        raise HTTPException(status_code=403, detail="Access denied")
 
     # Update event flag
     try:
@@ -1779,6 +2090,11 @@ async def delete_event(request: Request, gid: int, eid: int, tab: str | None = F
     # Delete the event (CASCADE will handle notifications)
     print(f"DELETE EVENT: eid={eid}, gid={gid}, user_id={user_id}")
     result = EventRepo.delete(eid)
+    try:
+        if result:
+            AuditLogRepo.add('event_deleted', user_id=user_id, group_id=gid, event_id=eid)
+    except Exception:
+        pass
     print(f"DELETE RESULT: {result}")
     
     # Build redirect URL with all parameters
@@ -1824,6 +2140,10 @@ async def book_event(request: Request, gid: int, eid: int, tab: str | None = For
     print(f"EVENT AFTER: {event_after}")
     
     BookingRepo.add_booking(user_id, eid)
+    try:
+        AuditLogRepo.add('event_booked', user_id=user_id, group_id=gid, event_id=eid)
+    except Exception:
+        pass
     
     print(f"BOOKING SUCCESS")
     # Build redirect URL with all parameters
@@ -1878,6 +2198,10 @@ async def unbook_event(request: Request, gid: int, eid: int, tab: str | None = F
         print(f"USER NOT RESPONSIBLE: user {user_id} is not responsible for event {eid}")
     
     BookingRepo.remove_booking(user_id, eid)
+    try:
+        AuditLogRepo.add('event_unbooked', user_id=user_id, group_id=gid, event_id=eid)
+    except Exception:
+        pass
     # Build redirect URL with all parameters
     params = []
     if tab:
@@ -2021,7 +2345,15 @@ async def update_member_display_name(request: Request, gid: int, uid: int, displ
     user_id = urow[0]
     _require_admin(user_id, gid)
     # No additional encoding needed, FastAPI already handles UTF-8
+    try:
+        old = DisplayNameRepo.get_display_name(gid, uid)
+    except Exception:
+        old = None
     DisplayNameRepo.set_display_name(gid, uid, display_name)
+    try:
+        AuditLogRepo.add('member_display_name_updated', user_id=user_id, group_id=gid, old_value=old or '', new_value=display_name)
+    except Exception:
+        pass
     return RedirectResponse(f"/group/{gid}/settings?ok=member_name_saved", status_code=303)
 
 @app.post('/group/{gid}/settings/member/{uid}/role')
@@ -2065,6 +2397,10 @@ async def update_member_role(request: Request, gid: int, uid: int, new_role: str
         ok = 'member_role_saved'
     except Exception:
         ok = 'member_role_error'
+    try:
+        AuditLogRepo.add('member_role_updated', user_id=actor_id, group_id=gid, event_id=None, old_value='', new_value=new_role)
+    except Exception:
+        pass
     return RedirectResponse(f"/group/{gid}/settings?ok={ok}", status_code=303)
 
 @app.post('/group/{gid}/settings/member/{uid}/remove')
@@ -2089,6 +2425,10 @@ async def remove_member(request: Request, gid: int, uid: int):
             cur.execute("DELETE FROM user_group_roles WHERE group_id = ? AND user_id = ?", (gid, uid))
             conn.commit()
         ok = 'member_removed'
+        try:
+            AuditLogRepo.add('member_removed', user_id=actor_id, group_id=gid, old_value=str(uid))
+        except Exception:
+            pass
     except Exception:
         ok = 'member_remove_error'
     return RedirectResponse(f"/group/{gid}/settings?ok={ok}", status_code=303)
@@ -2149,9 +2489,15 @@ async def add_group_member(request: Request, gid: int, identifier_type: str = Fo
         if target_user_id:
             # Add as confirmed member
             RoleRepo.add_role(target_user_id, gid, 'member', confirmed=True)
-            ok_code = 'member_added'
+        ok_code = 'member_added'
     except Exception:
         ok_code = 'member_error'
+
+    try:
+        if target_user_id:
+            AuditLogRepo.add('member_added', user_id=user_id, group_id=gid, new_value=str(target_user_id))
+    except Exception:
+        pass
 
     return RedirectResponse(f"/group/{gid}/settings?ok={ok_code}", status_code=303)
 
@@ -2192,6 +2538,10 @@ async def delete_group(request: Request, gid: int):
         # - events (and their notifications via CASCADE)
         # - user_display_names (display names)
         GroupRepo.delete_group(gid)
+        try:
+            AuditLogRepo.add('group_deleted', user_id=user_id, group_id=gid)
+        except Exception:
+            pass
         
         print(f"Group {gid} deleted successfully by user {user_id}")
         

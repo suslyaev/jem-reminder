@@ -1431,6 +1431,48 @@ class GroupRoleTemplateRepo:
                 cur.execute("INSERT INTO group_role_templates (group_id, role_name, required) VALUES (?,?,?)", (group_id, role_name.strip(), int(required)))
             conn.commit()
 
+class AuditLogRepo:
+    @staticmethod
+    def add(action: str, *, user_id: Optional[int] = None, group_id: Optional[int] = None, event_id: Optional[int] = None, old_value: Optional[str] = None, new_value: Optional[str] = None) -> None:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO audit_log (user_id, action, group_id, event_id, old_value, new_value) VALUES (?,?,?,?,?,?)",
+                (user_id, action, group_id, event_id, old_value, new_value)
+            )
+            conn.commit()
+
+    @staticmethod
+    def list(page: int = 1, per_page: int = 50, *, group_id: Optional[int] = None, event_id: Optional[int] = None) -> List[Tuple]:
+        offset = max(0, (int(page or 1) - 1) * int(per_page or 50))
+        with get_conn() as conn:
+            cur = conn.cursor()
+            base = "SELECT id, created_at, user_id, action, group_id, event_id, old_value, new_value FROM audit_log"
+            where = []
+            params: List = []
+            if group_id:
+                where.append("group_id = ?")
+                params.append(group_id)
+            if event_id:
+                where.append("event_id = ?")
+                params.append(event_id)
+            sql = base + (" WHERE " + " AND ".join(where) if where else "") + " ORDER BY id DESC LIMIT ? OFFSET ?"
+            params.extend([per_page, offset])
+            cur.execute(sql, tuple(params))
+            rows = cur.fetchall()
+            # total count
+            cur.execute("SELECT COUNT(*) FROM audit_log" + (" WHERE " + " AND ".join(where) if where else ""), tuple(params[:-2]))
+            total = cur.fetchone()[0]
+            return rows, total
+
+    @staticmethod
+    def delete(audit_id: int) -> bool:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("DELETE FROM audit_log WHERE id = ?", (audit_id,))
+            conn.commit()
+            return cur.rowcount > 0
+
     @staticmethod
     def replace_all(group_id: int, items: List[Tuple[str, int]]) -> None:
         with get_conn() as conn:
