@@ -1508,6 +1508,20 @@ class GroupRoleTemplateRepo:
                 cur.execute("INSERT INTO group_role_templates (group_id, role_name, required) VALUES (?,?,?)", (group_id, role_name.strip(), int(required)))
             conn.commit()
 
+    @staticmethod
+    def replace_all(group_id: int, items: List[Tuple[str, int]]) -> None:
+        """Replace all role templates for a group with provided (role_name, required) pairs."""
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("DELETE FROM group_role_templates WHERE group_id = ?", (group_id,))
+            for role_name, required in items:
+                if role_name and role_name.strip() and int(required) > 0:
+                    cur.execute(
+                        "INSERT INTO group_role_templates (group_id, role_name, required) VALUES (?,?,?)",
+                        (group_id, role_name.strip(), int(required))
+                    )
+            conn.commit()
+
 class AuditLogRepo:
     @staticmethod
     def add(action: str, *, user_id: Optional[int] = None, group_id: Optional[int] = None, event_id: Optional[int] = None, old_value: Optional[str] = None, new_value: Optional[str] = None) -> None:
