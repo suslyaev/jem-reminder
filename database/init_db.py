@@ -68,6 +68,59 @@ def apply_migrations(conn):
         print("  - Колонка добавлена")
 
     # Добавляем аудиторские поля для событий, если отсутствуют
+    # Шаблоны ролей на уровне группы
+    try:
+        if check_table_exists(conn, 'groups'):
+            if not check_table_exists(conn, 'group_role_templates'):
+                print("  - Создаем таблицу group_role_templates...")
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS group_role_templates (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        group_id INTEGER NOT NULL,
+                        role_name TEXT NOT NULL,
+                        required INTEGER NOT NULL DEFAULT 1,
+                        created_at TEXT DEFAULT (datetime('now')),
+                        UNIQUE(group_id, role_name),
+                        FOREIGN KEY(group_id) REFERENCES groups(id) ON DELETE CASCADE
+                    )
+                    """
+                )
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_group_role_templates_group ON group_role_templates(group_id)")
+                print("  - Таблица group_role_templates создана")
+    except Exception as e:
+        print("  - Ошибка при создании group_role_templates:", e)
+
+    # Audit log table
+    try:
+        if check_table_exists(conn, 'users') and check_table_exists(conn, 'groups'):
+            if not check_table_exists(conn, 'audit_log'):
+                print("  - Создаем таблицу audit_log...")
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS audit_log (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        created_at TEXT DEFAULT (datetime('now')),
+                        user_id INTEGER,
+                        action TEXT NOT NULL,
+                        group_id INTEGER,
+                        event_id INTEGER,
+                        old_value TEXT,
+                        new_value TEXT,
+                        FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE SET NULL,
+                        FOREIGN KEY(group_id) REFERENCES groups(id) ON DELETE CASCADE
+                    )
+                    """
+                )
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_group ON audit_log(group_id)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_event ON audit_log(event_id)")
+                print("  - Таблица audit_log создана")
+    except Exception as e:
+        print("  - Ошибка при создании audit_log:", e)
+
     if check_table_exists(conn, 'events'):
         cursor = conn.cursor()
         if not check_column_exists(conn, 'events', 'created_by_user_id'):

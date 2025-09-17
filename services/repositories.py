@@ -323,21 +323,98 @@ class RoleRepo:
             conn.commit()
 
     @staticmethod
+    def confirm_pending_roles(user_id: int, group_id: int) -> None:
+        """Confirm any pending invites (admin or member) for the user in the group.
+        - If there is a member_* pending record, grant member.
+        - If there is an admin pending record (id/username/phone), grant admin.
+        Clears matched pending records accordingly.
+        """
+        with get_conn() as conn:
+            cur = conn.cursor()
+            # Detect matches by id/username/phone for both admin and member prefixes
+            # Give member if any member_* entry exists
+            cur.execute("SELECT telegram_id, username, phone FROM users WHERE id = ?", (user_id,))
+            row = cur.fetchone()
+            telegram_id = row[0] if row else None
+            username = row[1] if row else None
+            phone = row[2] if row else None
+
+            def has_pending(types_sql: str, value: str) -> bool:
+                cur.execute(f"SELECT 1 FROM pending_admins WHERE group_id=? AND identifier_type IN ({types_sql}) AND {value}", [])
+                return cur.fetchone() is not None
+
+            # Member matches
+            has_member = False
+            # by id
+            if telegram_id is not None:
+                cur.execute("SELECT 1 FROM pending_admins WHERE group_id=? AND identifier_type='member_id' AND identifier=?",
+                            (group_id, str(telegram_id)))
+                has_member = cur.fetchone() is not None or has_member
+            # by username
+            if username:
+                cur.execute("SELECT 1 FROM pending_admins WHERE group_id=? AND identifier_type='member_username' AND LOWER(identifier)=LOWER(?)",
+                            (group_id, username.lstrip('@')))
+                has_member = cur.fetchone() is not None or has_member
+            # by phone
+            if phone:
+                normalized = ''.join(filter(str.isdigit, phone))
+                if normalized.startswith('8'):
+                    normalized = '7' + normalized[1:]
+                cur.execute("SELECT 1 FROM pending_admins WHERE group_id=? AND identifier_type='member_phone' AND REPLACE(REPLACE(REPLACE(identifier,'+',''),'-',''),' ','') LIKE ?",
+                            (group_id, f"%{normalized[-10:]}%"))
+                has_member = cur.fetchone() is not None or has_member
+
+            if has_member:
+                cur.execute("INSERT OR IGNORE INTO user_group_roles (user_id, group_id, role, confirmed) VALUES (?,?,?,1)",
+                            (user_id, group_id, 'member'))
+                # Clear member_* pendings for this user
+                cur.execute("DELETE FROM pending_admins WHERE group_id = ? AND identifier_type='member_id' AND identifier = (SELECT CAST(telegram_id AS TEXT) FROM users WHERE id = ?)", (group_id, user_id))
+                cur.execute("DELETE FROM pending_admins WHERE group_id = ? AND identifier_type='member_username' AND LOWER(identifier) = (SELECT LOWER(COALESCE(username,'')) FROM users WHERE id = ?)", (group_id, user_id))
+                cur.execute("DELETE FROM pending_admins WHERE group_id = ? AND identifier_type='member_phone' AND REPLACE(REPLACE(REPLACE(identifier,'+',''),'-',''),' ','') LIKE '%' || (SELECT substr(REPLACE(REPLACE(REPLACE(COALESCE(phone,''),'+',''),'-',''),' ',''), -10) FROM users WHERE id = ?) || '%'", (group_id, user_id))
+
+            # Admin matches (keep existing behavior)
+            # Insert admin if there is at least one admin-type pending
+            has_admin = False
+            if telegram_id is not None:
+                cur.execute("SELECT 1 FROM pending_admins WHERE group_id = ? AND identifier_type = 'id' AND identifier = ?",
+                            (group_id, str(telegram_id)))
+                has_admin = cur.fetchone() is not None or has_admin
+            if username:
+                cur.execute("SELECT 1 FROM pending_admins WHERE group_id = ? AND identifier_type = 'username' AND LOWER(identifier) = LOWER(?)",
+                            (group_id, username.lstrip('@')))
+                has_admin = cur.fetchone() is not None or has_admin
+            if phone:
+                normalized = ''.join(filter(str.isdigit, phone))
+                if normalized.startswith('8'):
+                    normalized = '7' + normalized[1:]
+                cur.execute("SELECT 1 FROM pending_admins WHERE group_id = ? AND identifier_type = 'phone' AND REPLACE(REPLACE(REPLACE(identifier,'+',''),'-',''),' ','') LIKE ?",
+                            (group_id, f"%{normalized[-10:]}%"))
+                has_admin = cur.fetchone() is not None or has_admin
+
+            if has_admin:
+                cur.execute("INSERT OR IGNORE INTO user_group_roles (user_id, group_id, role, confirmed) VALUES (?,?,?,1)",
+                            (user_id, group_id, 'admin'))
+                cur.execute("DELETE FROM pending_admins WHERE group_id = ? AND identifier_type = 'id' AND identifier = (SELECT CAST(telegram_id AS TEXT) FROM users WHERE id = ?)", (group_id, user_id))
+                cur.execute("DELETE FROM pending_admins WHERE group_id = ? AND identifier_type = 'username' AND LOWER(identifier) = (SELECT LOWER(COALESCE(username,'')) FROM users WHERE id = ?)", (group_id, user_id))
+                cur.execute("DELETE FROM pending_admins WHERE group_id = ? AND identifier_type = 'phone' AND REPLACE(REPLACE(REPLACE(identifier,'+',''),'-',''),' ','') LIKE '%' || (SELECT substr(REPLACE(REPLACE(REPLACE(COALESCE(phone,''),'+',''),'-',''),' ',''), -10) FROM users WHERE id = ?) || '%'", (group_id, user_id))
+            conn.commit()
+
+    @staticmethod
     def find_groups_for_pending(telegram_id: Optional[int], username: Optional[str], phone: Optional[str]) -> List[int]:
         group_ids: List[int] = []
         with get_conn() as conn:
             cur = conn.cursor()
             if telegram_id is not None:
-                cur.execute("SELECT DISTINCT group_id FROM pending_admins WHERE identifier_type='id' AND identifier = ?", (str(telegram_id),))
+                cur.execute("SELECT DISTINCT group_id FROM pending_admins WHERE identifier_type IN ('id','member_id') AND identifier = ?", (str(telegram_id),))
                 group_ids += [r[0] for r in cur.fetchall()]
             if username:
-                cur.execute("SELECT DISTINCT group_id FROM pending_admins WHERE identifier_type='username' AND LOWER(identifier) = LOWER(?)", (username.lstrip('@'),))
+                cur.execute("SELECT DISTINCT group_id FROM pending_admins WHERE identifier_type IN ('username','member_username') AND LOWER(identifier) = LOWER(?)", (username.lstrip('@'),))
                 group_ids += [r[0] for r in cur.fetchall()]
             if phone:
                 normalized = ''.join(filter(str.isdigit, phone))
                 if normalized.startswith('8'):
                     normalized = '7' + normalized[1:]
-                cur.execute("SELECT DISTINCT group_id FROM pending_admins WHERE identifier_type='phone' AND REPLACE(REPLACE(REPLACE(identifier,'+',''),'-',''),' ','') LIKE ?",
+                cur.execute("SELECT DISTINCT group_id FROM pending_admins WHERE identifier_type IN ('phone','member_phone') AND REPLACE(REPLACE(REPLACE(identifier,'+',''),'-',''),' ','') LIKE ?",
                             (f"%{normalized[-10:]}%",))
                 group_ids += [r[0] for r in cur.fetchall()]
         # Unique
@@ -394,7 +471,7 @@ class RoleRepo:
     def has_any_pending_by_phone() -> bool:
         with get_conn() as conn:
             cur = conn.cursor()
-            cur.execute("SELECT 1 FROM pending_admins WHERE identifier_type = 'phone' LIMIT 1")
+            cur.execute("SELECT 1 FROM pending_admins WHERE identifier_type IN ('phone','member_phone') LIMIT 1")
             return cur.fetchone() is not None
 
     @staticmethod
@@ -1411,6 +1488,92 @@ class TemplateGenerationRepo:
             conn.commit()
 
 
+class GroupRoleTemplateRepo:
+    @staticmethod
+    def list(group_id: int) -> List[Tuple[str, int]]:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT role_name, required FROM group_role_templates WHERE group_id = ? ORDER BY role_name", (group_id,))
+            return cur.fetchall()
+
+    @staticmethod
+    def upsert(group_id: int, role_name: str, required: int = 1) -> None:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT id FROM group_role_templates WHERE group_id = ? AND role_name = ?", (group_id, role_name))
+            row = cur.fetchone()
+            if row:
+                cur.execute("UPDATE group_role_templates SET required = ? WHERE id = ?", (int(required), row[0]))
+            else:
+                cur.execute("INSERT INTO group_role_templates (group_id, role_name, required) VALUES (?,?,?)", (group_id, role_name.strip(), int(required)))
+            conn.commit()
+
+    @staticmethod
+    def replace_all(group_id: int, items: List[Tuple[str, int]]) -> None:
+        """Replace all role templates for a group with provided (role_name, required) pairs."""
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("DELETE FROM group_role_templates WHERE group_id = ?", (group_id,))
+            for role_name, required in items:
+                if role_name and role_name.strip() and int(required) > 0:
+                    cur.execute(
+                        "INSERT INTO group_role_templates (group_id, role_name, required) VALUES (?,?,?)",
+                        (group_id, role_name.strip(), int(required))
+                    )
+            conn.commit()
+
+class AuditLogRepo:
+    @staticmethod
+    def add(action: str, *, user_id: Optional[int] = None, group_id: Optional[int] = None, event_id: Optional[int] = None, old_value: Optional[str] = None, new_value: Optional[str] = None) -> None:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO audit_log (user_id, action, group_id, event_id, old_value, new_value) VALUES (?,?,?,?,?,?)",
+                (user_id, action, group_id, event_id, old_value, new_value)
+            )
+            conn.commit()
+
+    @staticmethod
+    def list(page: int = 1, per_page: int = 50, *, group_id: Optional[int] = None, event_id: Optional[int] = None) -> List[Tuple]:
+        offset = max(0, (int(page or 1) - 1) * int(per_page or 50))
+        with get_conn() as conn:
+            cur = conn.cursor()
+            base = "SELECT id, created_at, user_id, action, group_id, event_id, old_value, new_value FROM audit_log"
+            where = []
+            params: List = []
+            if group_id:
+                where.append("group_id = ?")
+                params.append(group_id)
+            if event_id:
+                where.append("event_id = ?")
+                params.append(event_id)
+            sql = base + (" WHERE " + " AND ".join(where) if where else "") + " ORDER BY id DESC LIMIT ? OFFSET ?"
+            params.extend([per_page, offset])
+            cur.execute(sql, tuple(params))
+            rows = cur.fetchall()
+            # total count
+            cur.execute("SELECT COUNT(*) FROM audit_log" + (" WHERE " + " AND ".join(where) if where else ""), tuple(params[:-2]))
+            total = cur.fetchone()[0]
+            return rows, total
+
+    @staticmethod
+    def delete(audit_id: int) -> bool:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("DELETE FROM audit_log WHERE id = ?", (audit_id,))
+            conn.commit()
+            return cur.rowcount > 0
+
+    @staticmethod
+    def replace_all(group_id: int, items: List[Tuple[str, int]]) -> None:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("DELETE FROM group_role_templates WHERE group_id = ?", (group_id,))
+            for role_name, required in items:
+                if role_name and role_name.strip() and int(required) > 0:
+                    cur.execute("INSERT INTO group_role_templates (group_id, role_name, required) VALUES (?,?,?)", (group_id, role_name.strip(), int(required)))
+            conn.commit()
+
 class TemplateGenerator:
     @staticmethod
     def _parse_weekdays(s: Optional[str]) -> List[int]:
@@ -1434,7 +1597,7 @@ class TemplateGenerator:
             cur += timedelta(days=step_days)
 
     @staticmethod
-    def generate_for_template(template_id: int) -> int:
+    def generate_for_template(template_id: int, created_by_user_id: Optional[int] = None) -> int:
         """Generate events from template within its planning_horizon_days. Returns number of created events."""
         from datetime import datetime
         created = 0
@@ -1449,7 +1612,7 @@ class TemplateGenerator:
         ) = tpl
 
         # Time window: horizon counted from the base event date
-        now = datetime.now()
+        now_naive = datetime.now()
 
         # Base start time
         try:
@@ -1459,6 +1622,18 @@ class TemplateGenerator:
                 base_dt = datetime.fromisoformat(base_time.replace('Z', ''))
             except Exception:
                 return 0
+
+        # Apply template timezone if available (treat base_time as wall-clock in that tz)
+        try:
+            from zoneinfo import ZoneInfo  # Python 3.9+
+            tzinfo = ZoneInfo(timezone) if timezone else None
+        except Exception:
+            tzinfo = None
+        if tzinfo is not None and base_dt.tzinfo is None:
+            base_dt = base_dt.replace(tzinfo=tzinfo)
+
+        # Use naive "now" for wall-clock comparisons
+        now_cmp = now_naive
 
         # Horizon end relative to base date
         horizon_end = base_dt + timedelta(days=int(planning_horizon_days or 60))
@@ -1478,12 +1653,14 @@ class TemplateGenerator:
         # Helper to create one occurrence
         def ensure_occurrence(start_dt: datetime):
             nonlocal created
-            if start_dt < now:
+            # Compare and store as naive wall-clock time
+            cmp_dt = start_dt.replace(tzinfo=None) if start_dt.tzinfo is not None else start_dt
+            if cmp_dt < now_cmp:
                 return
-            key = start_dt.strftime('%Y-%m-%d %H:%M')
+            key = cmp_dt.strftime('%Y-%m-%d %H:%M')
             if TemplateGenerationRepo.was_generated(template_id, key):
                 return
-            event_id = EventRepo.create(group_id, name, key)
+            event_id = EventRepo.create(group_id, name, key, created_by_user_id=created_by_user_id)
             # create default group notifications for the event
             try:
                 EventNotificationRepo.create_from_group_defaults(event_id, group_id)

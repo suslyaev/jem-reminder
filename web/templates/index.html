@@ -5,6 +5,13 @@
     <title>JEM Reminder - Группы</title>
     <link rel="stylesheet" href="/static/style.css">
     <style>
+      .modal { position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); }
+      .modal-content { background-color: #1f2937 !important; margin: 5% auto; padding: 0; border-radius: 8px; width: 90%; max-width: 450px; max-height: 90vh; box-shadow: 0 4px 12px rgba(0,0,0,0.5) !important; opacity: 1 !important; display: flex; flex-direction: column; }
+      .modal-header { padding: 16px 20px; border-bottom: 1px solid #374151 !important; display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; }
+      .modal-header h3 { margin: 0; color: #f9fafb !important; }
+      .close-btn { background: none; border: none; font-size: 24px; cursor: pointer; color: #f9fafb !important; padding: 0; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; }
+      .modal-body { padding: 20px; overflow-y: auto; flex: 1; }
+      .modal-footer { padding: 16px 20px; border-top: 1px solid #374151 !important; display: flex; gap: 8px; justify-content: flex-end; flex-shrink: 0; }
       .group-card { 
         position: relative; 
         display: flex; 
@@ -78,6 +85,13 @@
       .tab-btn.active { background: var(--btn); color: #fff; }
       .tab-content { display: block; }
       .tab-content.hidden { display: none; }
+      /* Audit dropdown styles (match role booking style) */
+      .autocomplete-container { position: relative; }
+      .autocomplete-input { width: 100%; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text); font-size: 14px; }
+      .autocomplete-dropdown { position: absolute !important; top: 100% !important; left: 0 !important; right: 0 !important; background: #1f2937 !important; border: 1px solid #374151 !important; border-radius: 8px !important; max-height: 200px !important; overflow-y: auto !important; z-index: 1000 !important; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5) !important; margin-top: 4px !important; opacity: 1 !important; }
+      .autocomplete-option { padding: 10px 12px; cursor: pointer; border-bottom: 1px solid #374151; background: #1f2937 !important; color: #f9fafb !important; }
+      .autocomplete-option:hover { background: #374151 !important; }
+      .autocomplete-option:last-child { border-bottom: none; }
     </style>
   </head>
   <body>
@@ -92,6 +106,7 @@
         <div class="tabs" style="display:flex; gap:8px; margin-bottom: 12px;">
           <button class="tab-btn active" id="tab-groups" onclick="switchIndexTab('groups')">Группы</button>
           <button class="tab-btn" id="tab-users" onclick="switchIndexTab('users')">Пользователи</button>
+          <button class="tab-btn" id="tab-audit" onclick="switchIndexTab('audit')">Аудит</button>
         </div>
 
         <div id="tab-content-groups" class="tab-content">
@@ -118,7 +133,35 @@
                   <div class="meta-line">Роль: {{ role_label }}</div>
                   <div class="meta-line">Мероприятий: {{ cnt }}</div>
                 </div>
-                <a class="gear" href="/group/{{ gid }}/settings{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Настройки">⚙️</a>
+                <div class="gear" style="display:flex; gap:8px; align-items:center;">
+                  <!-- Single global modal for group message (must be unique id) -->
+                  {% if loop.first %}
+                  <div id="indexGroupMessageModal" class="modal" style="display:none;">
+                    <div class="modal-content">
+                      <div class="modal-header">
+                        <h3>Отправить сообщение в группу</h3>
+                        <button class="close-btn" onclick="closeGroupMessageModalIndex()">&times;</button>
+                      </div>
+                      <div class="modal-body">
+                        <textarea id="indexGroupMessageText" placeholder="Введите сообщение для группы..." rows="4" style="width: 100%; padding: 8px; border: 1px solid #374151 !important; border-radius: 4px; resize: vertical; font-family: inherit; background: #1f2937 !important; color: #f9fafb !important;"></textarea>
+                        <input type="hidden" id="indexGroupMessageGid" value="">
+                      </div>
+                      <div class="modal-footer">
+                        <button class="btn" onclick="sendGroupMessageIndex()" style="background: #3b82f6;">Отправить</button>
+                        <button class="btn" onclick="closeGroupMessageModalIndex()" style="background: #6b7280;">Отмена</button>
+                      </div>
+                    </div>
+                  </div>
+                  {% endif %}
+                  {% if is_superadmin or (role and role not in ['member','participant']) %}
+                    <a class="group-gear" href="/group/{{ gid }}/audit{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Аудит" title="Аудит" style="text-decoration:none;">🧾</a>
+                    <a class="group-gear" href="/group/{{ gid }}/analytics{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Аналитика" title="Аналитика" style="text-decoration:none;">📊</a>
+                    <a class="group-gear" href="#" data-action="group-message" data-gid="{{ gid }}" data-title="{{ title }}" aria-label="Сообщение" title="Сообщение" style="text-decoration:none;">✉️</a>
+                    <a class="group-gear" href="/group/{{ gid }}/settings{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Настройки">⚙️</a>
+                  {% else %}
+                    <a class="group-gear" href="/group/{{ gid }}/settings{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Настройки">⚙️</a>
+                  {% endif %}
+                </div>
               </div>
             {% endfor %}
             </div>
@@ -127,6 +170,7 @@
         </div>
 
         <div id="tab-content-users" class="tab-content hidden">
+        
         <h3>Выберите пользователя</h3>
         <div class="search-container">
           <input type="text" id="userSearch" class="search-box" placeholder="🔍 Поиск пользователей (имя, @ник, TG ID)..." />
@@ -157,16 +201,21 @@
                     {% set parts = line.split('::', 1) %}
                     {% set g_id = parts[0] %}
                     {% set g_label = parts[1] if parts|length > 1 else line %}
-                    <a class="link" href="/group/{{ g_id }}{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">{{ g_label }}</a>{% if not loop.last %}<br>{% endif %}
+                    {% set split2 = g_label.rsplit('(', 1) %}
+                    {% set g_title = split2[0].strip() %}
+                    {% set role_en = (split2[1][:-1].strip()) if split2|length > 1 else None %}
+                    {% set role_map = {'superadmin':'Суперадмин','owner':'Владелец','admin':'Админ','member':'Участник','participant':'Участник'} %}
+                    {% set role_ru = role_map.get(role_en, role_en) if role_en else None %}
+                    <a class="link" href="/group/{{ g_id }}{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">{{ g_title }}</a>{% if role_ru %} ({{ role_ru }}){% endif %}{% if not loop.last %}<br>{% endif %}
                   {% endfor %}
                 </div>
               {% endif %}
               <div style="margin-top:6px; display:flex; gap:8px; flex-wrap:wrap;">
-                <form method="post" action="/admin/users/{{ uid }}/block{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">
+                <form method="post" action="/admin/users/{{ uid }}/block{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}&tab=users{% else %}?tab=users{% endif %}">
                   <input type="hidden" name="blocked" value="{{ 0 if not blocked else 1 }}">
                   <button class="btn" type="submit" style="background: {{ '#ef4444' if not blocked else '#6b7280' }};">{{ 'Заблокировать' if not blocked else 'Разблокировать' }}</button>
                 </form>
-                <form method="post" action="/admin/users/{{ uid }}/delete{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" onsubmit="return confirm('Удалить пользователя и удалить его из всех групп?');">
+                <form method="post" action="/admin/users/{{ uid }}/delete{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}&tab=users{% else %}?tab=users{% endif %}" onsubmit="return confirm('Удалить пользователя и удалить его из всех групп?');">
                   <button class="btn" type="submit" style="background:#ef4444;">Удалить</button>
                 </form>
               </div>
@@ -175,6 +224,180 @@
           </div>
         {% endfor %}
         </div>
+        </div>
+
+        <div id="tab-content-audit" class="tab-content hidden">
+        <h3>Полный аудит</h3>
+        <form id="auditFilterForm" method="get" action="/" style="margin-bottom:8px; display:flex; gap:8px; align-items:flex-start; flex-wrap:wrap;">
+          <input type="hidden" name="tab" value="audit">
+          {% if request.query_params.get('group_id') %}
+            <input type="hidden" name="group_id" value="{{ request.query_params.get('group_id') }}">
+          {% endif %}
+          <div style="min-width:260px;">
+            <div style="font-size:13px; color:var(--muted); margin-bottom:4px;">Группа</div>
+            {% if not request.query_params.get('group_id') %}
+            <div class="autocomplete-container" id="auditGroup">
+              <input class="autocomplete-input" type="text" id="auditGroupInput" placeholder="Выберите группу" value="" autocomplete="off" style="background: var(--bg);">
+              <input type="hidden" name="group_id" id="auditGroupId" value="{{ audit_filters.group_id or '' }}">
+              <div class="autocomplete-dropdown" id="auditGroupDd" style="display:none; background:#1f2937 !important; opacity:1 !important;">
+                {% for gid, title in audit_groups %}
+                  <div class="autocomplete-option" data-value="{{ gid }}">{{ title }} (#{{ gid }})</div>
+                {% endfor %}
+              </div>
+            </div>
+            {% else %}
+            <div class="autocomplete-container" id="auditGroup" style="opacity:0.6;">
+              <input class="autocomplete-input" type="text" value="Зафиксирована группа #{{ request.query_params.get('group_id') }}" disabled style="background: var(--bg);">
+            </div>
+            {% endif %}
+          </div>
+          <div style="min-width:260px;">
+            <div style="font-size:13px; color:var(--muted); margin-bottom:4px;">Мероприятие</div>
+            <div class="autocomplete-container" id="auditEvent">
+              <input class="autocomplete-input" type="text" id="auditEventInput" placeholder="Сначала выберите группу" value="" autocomplete="off" style="background: var(--bg);">
+              <input type="hidden" name="event_id" id="auditEventId" value="{{ audit_filters.event_id or '' }}">
+              <div class="autocomplete-dropdown" id="auditEventDd" style="display:none; background:#1f2937 !important; opacity:1 !important;">
+                {% for eid, name in audit_events %}
+                  <div class="autocomplete-option" data-value="{{ eid }}">{{ name }} (#{{ eid }})</div>
+                {% endfor %}
+              </div>
+            </div>
+          </div>
+          <div style="display:flex; gap:8px; align-items:center;">
+            <label>Показывать:
+              <select name="per_page" style="padding: 6px 8px; border:1px solid var(--border); border-radius:6px; background: var(--card); color: var(--text);">
+                {% set pp = audit_per_page or 50 %}
+                <option value="20" {% if pp==20 %}selected{% endif %}>20</option>
+                <option value="50" {% if pp==50 %}selected{% endif %}>50</option>
+                <option value="100" {% if pp==100 %}selected{% endif %}>100</option>
+                <option value="200" {% if pp==200 %}selected{% endif %}>200</option>
+              </select>
+            </label>
+            <button class="btn" type="submit">Фильтр</button>
+            <a class="btn" href="/?tab=audit" style="text-decoration:none;">Сброс</a>
+          </div>
+        </form>
+        {% set rows = audit_items if audit_items is defined and audit_items else audit_rows %}
+        {% if rows %}
+          {% set total_pages = (audit_total + audit_per_page - 1) // audit_per_page %}
+          <div class="pagination-container" style="margin-top:8px; margin-bottom:8px; padding-top:8px; border-top:1px solid var(--border); display:flex; align-items:center; justify-content:space-between;">
+            <div class="pagination-controls" style="display:flex; gap:8px; align-items:center;">
+              {% if audit_page > 1 %}
+                <a class="pagination-btn" href="/?tab=audit&per_page={{ audit_per_page }}{% if audit_filters.group_id %}&group_id={{ audit_filters.group_id }}{% endif %}{% if audit_filters.event_id %}&event_id={{ audit_filters.event_id }}{% endif %}&page={{ audit_page - 1 }}">← Назад</a>
+              {% else %}
+                <span class="pagination-btn disabled">← Назад</span>
+              {% endif %}
+              {% if audit_page < total_pages %}
+                <a class="pagination-btn" href="/?tab=audit&per_page={{ audit_per_page }}{% if audit_filters.group_id %}&group_id={{ audit_filters.group_id }}{% endif %}{% if audit_filters.event_id %}&event_id={{ audit_filters.event_id }}{% endif %}&page={{ audit_page + 1 }}">Вперед →</a>
+              {% else %}
+                <span class="pagination-btn disabled">Вперед →</span>
+              {% endif %}
+            </div>
+            <div class="pagination-info" style="color:var(--muted); font-size:12px;">
+              Страница {{ audit_page }} из {{ total_pages }} ({{ audit_total }} записей)
+            </div>
+          </div>
+
+      <script>
+        // Removed group message modal usage on index. Use prompt-based sender below.
+      </script>
+      <script>
+        // Delegate clicks for group actions
+        document.addEventListener('click', function(e){
+          const link = e.target.closest('a[data-action="group-message"]');
+          if (!link) return;
+          e.preventDefault();
+          const gid = link.getAttribute('data-gid');
+          if (gid) {
+            if (typeof window.openGroupMessageModalIndex === 'function') {
+              window.openGroupMessageModalIndex(gid);
+            } else {
+              // Fallback inline open if global not ready
+              const modal = document.getElementById('indexGroupMessageModal');
+              const txt = document.getElementById('indexGroupMessageText');
+              const hid = document.getElementById('indexGroupMessageGid');
+              if (modal && txt && hid){
+                hid.value = gid;
+                txt.value = '';
+                modal.style.display = 'block';
+                txt.focus();
+              }
+            }
+          }
+        });
+      </script>
+          <ul class="list">
+            {% for row in rows %}
+              {% if row is mapping %}
+              <li class="item" style="padding:6px 10px; margin-bottom:6px; position:relative;">
+                {% if not request.query_params.get('hide_delete') %}
+                <button data-audit-id="{{ row.id }}" class="audit-del" title="Удалить" style="position:absolute; top:6px; right:6px; background: transparent; border:0; color:#ef4444; cursor:pointer; font-size:14px;">✕</button>
+                {% endif %}
+                <div class="title" style="font-size: 13px;">{{ row.ts }} — {{ row.user_label or '—' }}</div>
+                <div class="meta" style="font-size:12px;">Группа: {% if row.group_title %}<a class="link" href="/group/{{ row.group_id }}">{{ row.group_title }}</a> ({{ row.group_id }}){% else %}—{% endif %} • Мероприятие: {% if row.event_name %}<a class="link" href="/group/{{ row.group_id }}/events/{{ row.event_id }}/settings">{{ row.event_name }}</a> ({{ row.event_id }}){% else %}—{% endif %}</div>
+                <div style="margin-top:4px;">
+                  <table style="width:100%; border-collapse:collapse; font-size:12px; table-layout:fixed;">
+                    <colgroup>
+                      <col style="width:30%">
+                      <col style="width:35%">
+                      <col style="width:35%">
+                    </colgroup>
+                    <thead>
+                      <tr style="color:var(--muted); text-align:left;">
+                        <th style="padding:3px 6px;">Что изменено</th>
+                        <th style="padding:3px 6px;">Старое</th>
+                        <th style="padding:3px 6px;">Новое</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td style="padding:3px 6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ row.action_ru or row.action }}</td>
+                        <td style="padding:3px 6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ row.old or '—' }}</td>
+                        <td style="padding:3px 6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ row.new or '—' }}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </li>
+              {% else %}
+              {% set id, created_at, uid, action, gid, eid, oldv, newv = row %}
+              <li class="item" style="padding:6px 10px; margin-bottom:6px; position:relative;">
+                {% if not request.query_params.get('hide_delete') %}
+                <button data-audit-id="{{ id }}" class="audit-del" title="Удалить" style="position:absolute; top:6px; right:6px; background: transparent; border:0; color:#ef4444; cursor:pointer; font-size:14px;">✕</button>
+                {% endif %}
+                <div class="title" style="font-size: 13px;">{{ created_at }} — {{ uid or '—' }}</div>
+                <div class="meta" style="font-size:12px;">Группа: {{ gid or '—' }} • Мероприятие: {{ eid or '—' }}</div>
+                <div style="margin-top:4px;">
+                  <table style="width:100%; border-collapse:collapse; font-size:12px; table-layout:fixed;">
+                    <colgroup>
+                      <col style="width:30%">
+                      <col style="width:35%">
+                      <col style="width:35%">
+                    </colgroup>
+                    <thead>
+                      <tr style="color:var(--muted); text-align:left;">
+                        <th style="padding:3px 6px;">Что изменено</th>
+                        <th style="padding:3px 6px;">Старое</th>
+                        <th style="padding:3px 6px;">Новое</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td style="padding:3px 6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ action }}</td>
+                        <td style="padding:3px 6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ oldv or '—' }}</td>
+                        <td style="padding:3px 6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ newv or '—' }}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </li>
+              {% endif %}
+            {% endfor %}
+          </ul>
+          
+        {% else %}
+          <div class="empty">Нет записей</div>
+        {% endif %}
         </div>
       {% else %}
         <h3>Выберите группу</h3>
@@ -200,7 +423,16 @@
                     <div class="meta-line">Роль: {{ role_label }}</div>
                     <div class="meta-line">Мероприятий: {{ cnt }}</div>
                   </div>
-                  <a class="gear" href="/group/{{ gid }}/settings{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Настройки">⚙️</a>
+                  <div class="gear" style="display:flex; gap:8px; align-items:center;">
+                    {% if is_superadmin or (role and role not in ['member','participant']) %}
+                      <a class="group-gear" href="/group/{{ gid }}/audit{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Аудит" title="Аудит" style="text-decoration:none;">🧾</a>
+                      <a class="group-gear" href="/group/{{ gid }}/analytics{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Аналитика" title="Аналитика" style="text-decoration:none;">📊</a>
+                    <a class="group-gear" href="#" data-action="group-message" data-gid="{{ gid }}" data-title="{{ title }}" aria-label="Сообщение" title="Сообщение" style="text-decoration:none;">✉️</a>
+                      <a class="group-gear" href="/group/{{ gid }}/settings{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Настройки">⚙️</a>
+                    {% else %}
+                      <a class="group-gear" href="/group/{{ gid }}/settings{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Настройки">⚙️</a>
+                    {% endif %}
+                  </div>
                 </div>
               {% endfor %}
             </div>
@@ -252,22 +484,53 @@
         function switchIndexTab(tab) {
           const groupsBtn = document.getElementById('tab-groups');
           const usersBtn = document.getElementById('tab-users');
+          const auditBtn = document.getElementById('tab-audit');
           const groupsContent = document.getElementById('tab-content-groups');
           const usersContent = document.getElementById('tab-content-users');
+          const auditContent = document.getElementById('tab-content-audit');
           if (tab === 'users') {
             if (groupsBtn) groupsBtn.classList.remove('active');
             if (usersBtn) usersBtn.classList.add('active');
+            if (auditBtn) auditBtn.classList.remove('active');
             if (groupsContent) groupsContent.classList.add('hidden');
             if (usersContent) usersContent.classList.remove('hidden');
+            if (auditContent) auditContent.classList.add('hidden');
+          } else if (tab === 'audit') {
+            const url = new URL(window.location.href);
+            if (url.searchParams.get('tab') !== 'audit') {
+              // First switch to audit: add param and reload once
+              url.searchParams.set('tab', 'audit');
+              window.location.href = url.toString();
+              return;
+            }
+            // Already on audit param → just activate tab
+            if (groupsBtn) groupsBtn.classList.remove('active');
+            if (usersBtn) usersBtn.classList.remove('active');
+            if (auditBtn) auditBtn.classList.add('active');
+            const groupsContent = document.getElementById('tab-content-groups');
+            const usersContent = document.getElementById('tab-content-users');
+            const auditContent = document.getElementById('tab-content-audit');
+            if (groupsContent) groupsContent.classList.add('hidden');
+            if (usersContent) usersContent.classList.add('hidden');
+            if (auditContent) auditContent.classList.remove('hidden');
           } else {
             if (usersBtn) usersBtn.classList.remove('active');
+            if (auditBtn) auditBtn.classList.remove('active');
             if (groupsBtn) groupsBtn.classList.add('active');
             if (usersContent) usersContent.classList.add('hidden');
+            if (auditContent) auditContent.classList.add('hidden');
             if (groupsContent) groupsContent.classList.remove('hidden');
           }
         }
 
         window.switchIndexTab = switchIndexTab;
+
+        // Keep active tab on reload via URL param
+        const currentUrl = new URL(window.location.href);
+        const tabParam = currentUrl.searchParams.get('tab');
+        if (tabParam === 'users' || tabParam === 'audit') {
+          switchIndexTab(tabParam);
+        }
 
         // Modal messaging to user
         window.openUserMessageModal = function(btn){
@@ -289,6 +552,32 @@
             })
             .catch(() => alert('Ошибка отправки'));
         };
+
+        // Group message modal (same approach as user message)
+        document.addEventListener('click', function(e){
+          const a = e.target.closest('a[data-action="group-message"]');
+          if (!a) return;
+          e.preventDefault();
+          const gid = a.getAttribute('data-gid');
+          const gtitle = a.getAttribute('data-title') || '';
+          const header = 'Сообщение для группы ' + (gtitle ? `${gtitle} (#${gid})` : `#${gid}`) + ':';
+          const text = prompt(header);
+          if (!text || !text.trim()) return;
+          const fd = new FormData();
+          fd.append('message', text.trim());
+          const tg = new URLSearchParams(window.location.search).get('tg_id');
+          const url = `/group/${gid}/send-group-message` + (tg && tg !== 'None' ? `?tg_id=${encodeURIComponent(tg)}` : '');
+          fetch(url, { method: 'POST', body: fd })
+            .then(r => r.json())
+            .then(data => {
+              if (data && data.success) {
+                alert('Отправлено');
+              } else {
+                alert('Ошибка: ' + (data && data.error ? data.error : 'Неизвестная ошибка'));
+              }
+            })
+            .catch(() => alert('Ошибка отправки'));
+        });
 
         // Users search (superadmin)
         const userSearch = document.getElementById('userSearch');
@@ -361,11 +650,93 @@
               }
             }, 3000);
             
+            // keep tab param, but drop ok
             url.searchParams.delete('ok');
             window.history.replaceState({}, '', url.toString());
           }
         }
       });
+      // Simple autocomplete init for audit filters
+      (function(){
+        function setupAutocomplete(rootId){
+          const root = document.getElementById(rootId);
+          if (!root) return;
+          const input = root.querySelector('.autocomplete-input');
+          const hidden = root.querySelector('input[type="hidden"]');
+          const dd = root.querySelector('.autocomplete-dropdown');
+          if (!input || !dd) return;
+          const opts = Array.from(dd.querySelectorAll('.autocomplete-option'));
+          function filter(){
+            const q = (input.value||'').toLowerCase().trim();
+            let any=false;
+            opts.forEach(o=>{ const t=o.textContent.toLowerCase(); const show = t.includes(q); o.style.display= show? 'block':'none'; if(show) any=true;});
+            dd.style.display = any? 'block':'none';
+          }
+          input.addEventListener('input', filter);
+          input.addEventListener('focus', ()=>{ dd.style.display='block'; filter(); });
+          opts.forEach(o=> o.addEventListener('click', ()=>{ input.value=o.textContent; if(hidden) hidden.value=o.dataset.value||''; dd.style.display='none'; input.dispatchEvent(new Event('change')); }));
+          document.addEventListener('click', (e)=>{ if (!root.contains(e.target)) dd.style.display='none'; });
+        }
+        setupAutocomplete('auditGroup');
+        setupAutocomplete('auditEvent');
+        // Disable event input until group selected
+        const groupHiddenEl = document.getElementById('auditGroupId');
+        const eventInput = document.getElementById('auditEventInput');
+        const eventDd = document.getElementById('auditEventDd');
+        function setEventState(enabled){ if (eventInput){ eventInput.disabled = !enabled; eventInput.placeholder = enabled? 'Выберите мероприятие' : 'Сначала выберите группу'; } }
+        // Enable event filter if group is already fixed via URL or hidden input
+        (function(){
+          const urlGroup = new URL(window.location.href).searchParams.get('group_id');
+          const selectedGroupId = (groupHiddenEl && groupHiddenEl.value) || urlGroup || '';
+          setEventState(!!selectedGroupId);
+        })();
+        // When group changes, reload page to fetch events for that group
+        const groupInput = document.getElementById('auditGroupInput');
+        if (groupInput){
+          groupInput.addEventListener('change', ()=>{
+            const url = new URL(window.location.href);
+            url.searchParams.set('tab','audit');
+            const gh = document.getElementById('auditGroupId');
+            url.searchParams.set('group_id', (gh && gh.value) || '');
+            url.searchParams.delete('event_id');
+            window.location.href = url.toString();
+          });
+        }
+        // Handle audit delete buttons (no reload)
+        document.addEventListener('click', function(e){
+          const btn = e.target.closest('.audit-del');
+          if (!btn) return;
+          const aid = btn.getAttribute('data-audit-id');
+          if (!aid) return;
+          fetch(`/admin/audit/${aid}/delete`, { method: 'POST' })
+            .then(r => r.json()).then(data => {
+              if (data && data.success){
+                const item = btn.closest('li.item');
+                if (item) item.remove();
+              } else {
+                alert('Ошибка удаления');
+              }
+            }).catch(() => alert('Ошибка удаления'));
+        });
+        // Prefill visible text from selected ids on load
+        const groupDd = document.getElementById('auditGroupDd');
+        if (groupHidden && groupHidden.value && groupDd){
+          const opt = Array.from(groupDd.querySelectorAll('.autocomplete-option')).find(o=>o.dataset.value === groupHidden.value);
+          if (opt){
+            const gi = document.getElementById('auditGroupInput');
+            if (gi) gi.value = opt.textContent;
+          }
+        }
+        const eventHidden = document.getElementById('auditEventId');
+        const eventDdEl = document.getElementById('auditEventDd');
+        if (eventHidden && eventHidden.value && eventDdEl){
+          const optE = Array.from(eventDdEl.querySelectorAll('.autocomplete-option')).find(o=>o.dataset.value === eventHidden.value);
+          if (optE){
+            const ei = document.getElementById('auditEventInput');
+            if (ei) ei.value = optE.textContent;
+          }
+        }
+      })();
     </script>
   </body>
 </html>
