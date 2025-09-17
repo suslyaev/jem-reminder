@@ -449,7 +449,11 @@ async def on_chat_member_update(event: ChatMemberUpdated):
             # Note: Do not auto-add superadmin to group membership
             # Default notifications
             NotificationRepo.ensure_defaults(group_id)
-            await bot.send_message(event.chat.id, "Группа зарегистрирована. Настройки уведомлений по умолчанию созданы.")
+            await bot.send_message(
+                event.chat.id,
+                "Привет! Я буду помогать с напоминаниями о предстоящих мероприятиях и бронированием ролей.\n"
+                "Добавляйте мероприятия — напомню вовремя и покажу актуальные брони."
+            )
         else:
             logging.info("Group already registered, skipping")
 
@@ -650,9 +654,16 @@ async def cb_event_delete(callback: types.CallbackQuery):
     try:
         _, eid, gid = callback.data.split(':')
         print(f"DELETE EVENT: eid={eid}, gid={gid}")
+        deleter_row = UserRepo.get_by_telegram_id(callback.from_user.id)
+        deleter = deleter_row[0] if deleter_row else None
         result = EventRepo.delete(int(eid))
         print(f"DELETE RESULT: {result}")
         await callback.answer("Удалено")
+        try:
+            from services.repositories import AuditLogRepo
+            AuditLogRepo.add('event_deleted', user_id=deleter, group_id=int(gid), event_id=int(eid))
+        except Exception:
+            pass
     except Exception as e:
         print(f"DELETE ERROR: {e}")
         await callback.answer(f"Ошибка: {e}")
@@ -1583,7 +1594,16 @@ async def on_freeform_input(message: types.Message):
                         pass
                     return
                 time_store = dt.strftime('%Y-%m-%d %H:%M:%S')
-                event_id = EventRepo.create(gid, ectx.get('name','Без названия'), time_store)
+                # Create event with created_by for audit
+                creator_row = UserRepo.get_by_telegram_id(message.from_user.id)
+                created_by_user_id = creator_row[0] if creator_row else None
+                event_id = EventRepo.create(gid, ectx.get('name','Без названия'), time_store, created_by_user_id=created_by_user_id)
+                # Audit: event_created
+                try:
+                    from services.repositories import AuditLogRepo
+                    AuditLogRepo.add('event_created', user_id=created_by_user_id, group_id=gid, event_id=event_id, new_value=ectx.get('name','Без названия'))
+                except Exception:
+                    pass
                 # Auto-create event notifications based on group settings
                 EventNotificationRepo.create_from_group_defaults(event_id, gid)
                 # Apply group role templates to the new event
@@ -1816,7 +1836,15 @@ async def on_freeform_input(message: types.Message):
                 except Exception:
                     pass
                 return
-            EventRepo.update_name(eid, new_name)
+            # Update name with updated_by for audit
+            updater = UserRepo.get_by_telegram_id(message.from_user.id)
+            updated_by = updater[0] if updater else None
+            EventRepo.update_name(eid, new_name, updated_by_user_id=updated_by)
+            try:
+                from services.repositories import AuditLogRepo
+                AuditLogRepo.add('event_name_updated', user_id=updated_by, group_id=gid, event_id=eid, new_value=new_name)
+            except Exception:
+                pass
             # refresh card directly
             ev = EventRepo.get_by_id(eid)
             if ev:
@@ -1898,7 +1926,16 @@ async def on_freeform_input(message: types.Message):
                 except Exception:
                     pass
                 return
-            EventRepo.update_time(eid, dt.strftime('%Y-%m-%d %H:%M:%S'))
+            # Update time with updated_by for audit
+            updater = UserRepo.get_by_telegram_id(message.from_user.id)
+            updated_by = updater[0] if updater else None
+            new_time_store = dt.strftime('%Y-%m-%d %H:%M:%S')
+            EventRepo.update_time(eid, new_time_store, updated_by_user_id=updated_by)
+            try:
+                from services.repositories import AuditLogRepo
+                AuditLogRepo.add('event_time_updated', user_id=updated_by, group_id=gid, event_id=eid, new_value=new_time_store)
+            except Exception:
+                pass
             # refresh card directly
             ev = EventRepo.get_by_id(eid)
             if ev:
