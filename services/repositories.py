@@ -1434,7 +1434,7 @@ class TemplateGenerator:
             cur += timedelta(days=step_days)
 
     @staticmethod
-    def generate_for_template(template_id: int) -> int:
+    def generate_for_template(template_id: int, created_by_user_id: Optional[int] = None) -> int:
         """Generate events from template within its planning_horizon_days. Returns number of created events."""
         from datetime import datetime
         created = 0
@@ -1449,7 +1449,7 @@ class TemplateGenerator:
         ) = tpl
 
         # Time window: horizon counted from the base event date
-        now = datetime.now()
+        now_naive = datetime.now()
 
         # Base start time
         try:
@@ -1459,6 +1459,18 @@ class TemplateGenerator:
                 base_dt = datetime.fromisoformat(base_time.replace('Z', ''))
             except Exception:
                 return 0
+
+        # Apply template timezone if available (treat base_time as wall-clock in that tz)
+        try:
+            from zoneinfo import ZoneInfo  # Python 3.9+
+            tzinfo = ZoneInfo(timezone) if timezone else None
+        except Exception:
+            tzinfo = None
+        if tzinfo is not None and base_dt.tzinfo is None:
+            base_dt = base_dt.replace(tzinfo=tzinfo)
+
+        # Use naive "now" for wall-clock comparisons
+        now_cmp = now_naive
 
         # Horizon end relative to base date
         horizon_end = base_dt + timedelta(days=int(planning_horizon_days or 60))
@@ -1478,12 +1490,14 @@ class TemplateGenerator:
         # Helper to create one occurrence
         def ensure_occurrence(start_dt: datetime):
             nonlocal created
-            if start_dt < now:
+            # Compare and store as naive wall-clock time
+            cmp_dt = start_dt.replace(tzinfo=None) if start_dt.tzinfo is not None else start_dt
+            if cmp_dt < now_cmp:
                 return
-            key = start_dt.strftime('%Y-%m-%d %H:%M')
+            key = cmp_dt.strftime('%Y-%m-%d %H:%M')
             if TemplateGenerationRepo.was_generated(template_id, key):
                 return
-            event_id = EventRepo.create(group_id, name, key)
+            event_id = EventRepo.create(group_id, name, key, created_by_user_id=created_by_user_id)
             # create default group notifications for the event
             try:
                 EventNotificationRepo.create_from_group_defaults(event_id, group_id)

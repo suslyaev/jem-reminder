@@ -157,16 +157,21 @@
                     {% set parts = line.split('::', 1) %}
                     {% set g_id = parts[0] %}
                     {% set g_label = parts[1] if parts|length > 1 else line %}
-                    <a class="link" href="/group/{{ g_id }}{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">{{ g_label }}</a>{% if not loop.last %}<br>{% endif %}
+                    {% set split2 = g_label.rsplit('(', 1) %}
+                    {% set g_title = split2[0].strip() %}
+                    {% set role_en = (split2[1][:-1].strip()) if split2|length > 1 else None %}
+                    {% set role_map = {'superadmin':'Суперадмин','owner':'Владелец','admin':'Админ','member':'Участник','participant':'Участник'} %}
+                    {% set role_ru = role_map.get(role_en, role_en) if role_en else None %}
+                    <a class="link" href="/group/{{ g_id }}{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">{{ g_title }}</a>{% if role_ru %} ({{ role_ru }}){% endif %}{% if not loop.last %}<br>{% endif %}
                   {% endfor %}
                 </div>
               {% endif %}
               <div style="margin-top:6px; display:flex; gap:8px; flex-wrap:wrap;">
-                <form method="post" action="/admin/users/{{ uid }}/block{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">
+                <form method="post" action="/admin/users/{{ uid }}/block{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}&tab=users{% else %}?tab=users{% endif %}">
                   <input type="hidden" name="blocked" value="{{ 0 if not blocked else 1 }}">
                   <button class="btn" type="submit" style="background: {{ '#ef4444' if not blocked else '#6b7280' }};">{{ 'Заблокировать' if not blocked else 'Разблокировать' }}</button>
                 </form>
-                <form method="post" action="/admin/users/{{ uid }}/delete{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" onsubmit="return confirm('Удалить пользователя и удалить его из всех групп?');">
+                <form method="post" action="/admin/users/{{ uid }}/delete{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}&tab=users{% else %}?tab=users{% endif %}" onsubmit="return confirm('Удалить пользователя и удалить его из всех групп?');">
                   <button class="btn" type="submit" style="background:#ef4444;">Удалить</button>
                 </form>
               </div>
@@ -269,6 +274,13 @@
 
         window.switchIndexTab = switchIndexTab;
 
+        // Keep active tab on reload via URL param
+        const currentUrl = new URL(window.location.href);
+        const tabParam = currentUrl.searchParams.get('tab');
+        if (tabParam === 'users') {
+          switchIndexTab('users');
+        }
+
         // Modal messaging to user
         window.openUserMessageModal = function(btn){
           const uid = btn.getAttribute('data-uid');
@@ -361,6 +373,7 @@
               }
             }, 3000);
             
+            // keep tab param, but drop ok
             url.searchParams.delete('ok');
             window.history.replaceState({}, '', url.toString());
           }

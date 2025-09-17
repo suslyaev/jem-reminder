@@ -2,7 +2,7 @@
 <html>
   <head>
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-    <title>{{ group[2] if group else ('Группа ' ~ group[0]) }}</title>
+    <title>{{ group[2] if group else 'Группа' }}</title>
     <link rel="stylesheet" href="/static/style.css">
     <style>
       .event-card { position: relative; padding: 12px 44px 12px 12px; border-radius: 12px; background: var(--card); margin-bottom: 12px; }
@@ -248,7 +248,7 @@
       <div class="tabs-container">
         <div class="tabs-header">
           <button class="tab-btn {% if active_tab == 'active' %}active{% endif %}" id="active-tab" onclick="switchEventTab('active')">
-            Активные мероприятия ({{ active_pagination.total_items }})
+            Активные ({{ active_pagination.total_items }})
           </button>
           <button class="tab-btn {% if active_tab == 'archived' %}active{% endif %}" id="archived-tab" onclick="switchEventTab('archived')">
             Архив ({{ archived_pagination.total_items }})
@@ -266,7 +266,7 @@
                 <div class="pagination-container">
                   <div class="pagination-controls">
                     {% if active_pagination.has_prev %}
-                      <a href="/group/{{ group[0] }}?page={{ active_pagination.current_page - 1 }}&per_page={{ per_page }}{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" class="pagination-btn">← Назад</a>
+                      <a href="/group/{{ group[0] }}?page={{ active_pagination.current_page - 1 }}&per_page={{ per_page }}{% if request.query_params.get('tg_id') | safe_tg_id %}&tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" class="pagination-btn">← Назад</a>
                     {% else %}
                       <span class="pagination-btn disabled">← Назад</span>
                     {% endif %}
@@ -277,7 +277,7 @@
                     </span>
                     
                     {% if active_pagination.has_next %}
-                      <a href="/group/{{ group[0] }}?page={{ active_pagination.current_page + 1 }}&per_page={{ per_page }}{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" class="pagination-btn">Вперед →</a>
+                      <a href="/group/{{ group[0] }}?page={{ active_pagination.current_page + 1 }}&per_page={{ per_page }}{% if request.query_params.get('tg_id') | safe_tg_id %}&tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" class="pagination-btn">Вперед →</a>
                     {% else %}
                       <span class="pagination-btn disabled">Вперед →</span>
                     {% endif %}
@@ -307,7 +307,7 @@
                   <!-- Первая строка: название и удаление -->
                   <div class="row" style="margin-bottom: 8px; width: 100%; justify-content: space-between;">
                     <input class="name-input" type="text" name="name" placeholder="Название" value="{{ e.name }}" style="flex: 1; margin-right: 8px;" />
-                    <button class="btn" type="button" onclick="deleteEvent({{ e.id }})" style="background: var(--danger); color: white; border: none; border-radius: 4px; padding: 8px 12px; cursor: pointer; font-size: 16px;">✕</button>
+                    <button class="btn" type="button" data-action="delete-event" data-event-id="{{ e.id }}" style="background: var(--danger); color: white; border: none; border-radius: 4px; padding: 8px 12px; cursor: pointer; font-size: 16px;">✕</button>
                   </div>
                   
                   <!-- Вторая строка: дата и время -->
@@ -326,7 +326,7 @@
                             <input class="autocomplete-input" type="text" value="{{ e.role_assignment_labels.get(rname, member_name_map.get(assigned_uid, 'ID: ' ~ assigned_uid)) }}" disabled>
                           </div>
                           {% if is_admin or assigned_uid == current_user_id %}
-                            <button class="btn" type="button" onclick="unbookRole({{ e.id }}, '{{ rname }}')" style="background: var(--danger);">Отменить бронь</button>
+                            <button class="btn" type="button" data-action="unbook-role" data-event-id="{{ e.id }}" data-role-name="{{ rname }}" style="background: var(--danger);">Отменить бронь</button>
                           {% endif %}
                         {% else %}
                           {% if member_options and member_options|length > 0 %}
@@ -340,7 +340,7 @@
                                 {% endfor %}
                               </div>
                             </div>
-                            <button class="btn" type="button" onclick="bookRoleFromRow(this, {{ e.id }}, '{{ rname }}')" {% if not e.allow_multi_roles_per_user and e.current_user_has_role %}disabled title="У вас уже есть роль в этом мероприятии"{% endif %}>Забронировать</button>
+                            <button class="btn" type="button" data-action="book-role" data-event-id="{{ e.id }}" data-role-name="{{ rname }}" {% if not e.allow_multi_roles_per_user and e.current_user_has_role %}disabled title="У вас уже есть роль в этом мероприятии"{% endif %}>Забронировать</button>
                           {% endif %}
                         {% endif %}
                       </div>
@@ -352,7 +352,7 @@
                   <div class="actions" style="justify-content: space-between; margin-top: 8px;">
                     <div style="display: flex; gap: 8px;">
                       <button class="btn" type="submit">Сохранить</button>
-                      <button class="btn" type="button" onclick="notifyNow({{ e.id }})">✉️ Сообщение</button>
+                      <button class="btn" type="button" data-action="notify-now" data-event-id="{{ e.id }}">✉️ Сообщение</button>
                     </div>
                     <a class="gear-inline" href="/group/{{ group[0] }}/events/{{ e.id }}/settings{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Настройки" style="text-decoration: none; padding: 8px 12px; background: var(--primary); color: white; border-radius: 6px; font-size: 16px; border: none; cursor: pointer; display: inline-block; text-align: center; min-width: 40px;">⚙️</a>
                   </div>
@@ -390,11 +390,11 @@
                           <input class="autocomplete-input" type="text" value="{{ e.role_assignment_labels.get(rname, member_name_map.get(assigned_uid, 'ID: ' ~ assigned_uid)) }}" disabled>
                         </div>
                         {% if assigned_uid == current_user_id %}
-                          <button class="btn" type="button" onclick="unbookRole({{ e.id }}, '{{ rname }}')" style="background: var(--danger);">Отменить бронь</button>
+                          <button class="btn" type="button" data-action="unbook-role" data-event-id="{{ e.id }}" data-role-name="{{ rname }}" style="background: var(--danger);">Отменить бронь</button>
                         {% endif %}
                       {% else %}
                         <div style="flex: 1; color: var(--muted);">Свободно</div>
-                        <button class="btn" type="button" onclick="bookRoleFromRow(this, {{ e.id }}, '{{ rname }}')" {% if not e.allow_multi_roles_per_user and e.current_user_has_role %}disabled title="У вас уже есть роль в этом мероприятии"{% endif %}>Забронировать</button>
+                        <button class="btn" type="button" data-action="book-role" data-event-id="{{ e.id }}" data-role-name="{{ rname }}" {% if not e.allow_multi_roles_per_user and e.current_user_has_role %}disabled title="У вас уже есть роль в этом мероприятии"{% endif %}>Забронировать</button>
                       {% endif %}
                     </div>
                   {% endfor %}
@@ -470,7 +470,7 @@
                   <!-- Первая строка: название и удаление -->
                   <div class="row" style="margin-bottom: 8px; width: 100%; justify-content: space-between;">
                     <input class="name-input" type="text" name="name" placeholder="Название" value="{{ e.name }}" style="flex: 1; margin-right: 8px;" />
-                    <button class="btn" type="button" onclick="deleteEvent({{ e.id }})" style="background: var(--danger); color: white; border: none; border-radius: 4px; padding: 8px 12px; cursor: pointer; font-size: 16px;">✕</button>
+                    <button class="btn" type="button" data-action="delete-event" data-event-id="{{ e.id }}" style="background: var(--danger); color: white; border: none; border-radius: 4px; padding: 8px 12px; cursor: pointer; font-size: 16px;">✕</button>
                   </div>
                   
                   <!-- Вторая строка: дата и время -->
@@ -784,24 +784,7 @@
             }
           })();
 
-          // Send booking-enabled group message
-          window.sendGroupMessage = function(eventId) {
-            if (!confirm('Отправить сообщение в группу с кнопками для бронирования?')) return;
-            const defaultMsg = `Напоминание о мероприятии «${e && e.name ? e.name : ''}»`;
-            const msg = prompt('Текст сообщения (необязательно):', defaultMsg) || defaultMsg;
-            const formData = new FormData();
-            formData.append('message', msg);
-            fetch(`/group/{{ group[0] }}/send-group-message{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}`, { method: 'POST', body: formData })
-              .then(r => r.json())
-              .then(data => {
-                if (data && data.success) {
-                  showToast('Сообщение отправлено');
-                } else {
-                  showToast('Ошибка отправки: ' + (data && data.error ? data.error : 'Неизвестная ошибка'), 'error');
-                }
-              })
-              .catch(() => showToast('Ошибка отправки сообщения', 'error'));
-          };
+          // (removed unused buggy sendGroupMessage(eventId) function)
         </script>
       {% endif %}
     </div>
@@ -846,6 +829,16 @@
     </div>
 
     <script>
+      // Helper to append tg_id from current URL to API calls
+      function withTg(url) {
+        try {
+          const tg = new URLSearchParams(window.location.search).get('tg_id');
+          if (tg && tg !== 'None') {
+            return url + (url.includes('?') ? '&' : '?') + 'tg_id=' + encodeURIComponent(tg);
+          }
+        } catch (e) {}
+        return url;
+      }
       // Add tg_id, tab, and pagination parameters to all forms automatically
       function addTgIdToForms() {
         const urlParams = new URLSearchParams(window.location.search);
@@ -979,7 +972,7 @@
         if (activeTab && activePaginationInfo) {
           const match = activePaginationInfo.textContent.match(/\((\d+) мероприятий\)/);
           const activeCount = match ? match[1] : document.querySelectorAll('#active-events .event-card').length;
-          activeTab.textContent = `Активные мероприятия (${activeCount})`;
+          activeTab.textContent = `Активные (${activeCount})`;
         }
         
         if (archivedTab && archivedPaginationInfo) {
@@ -1126,7 +1119,7 @@
         formData.append('page', '{{ current_page }}');
         formData.append('per_page', '{{ per_page }}');
         
-        fetch('/group/{{ group[0] }}/events/' + eventId + '/book{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}', {
+        fetch(withTg('/group/{{ group[0] }}/events/' + eventId + '/book'), {
           method: 'POST',
           body: formData
         })
@@ -1154,7 +1147,7 @@
         formData.append('page', '{{ current_page }}');
         formData.append('per_page', '{{ per_page }}');
         
-        fetch('/group/{{ group[0] }}/events/' + eventId + '/unbook{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}', {
+        fetch(withTg('/group/{{ group[0] }}/events/' + eventId + '/unbook'), {
           method: 'POST',
           body: formData
         })
@@ -1185,7 +1178,7 @@
         formData.append('page', '{{ current_page }}');
         formData.append('per_page', '{{ per_page }}');
         if (selected) formData.append('selected_user_id', selected);
-        fetch(`/group/{{ group[0] }}/events/${eventId}/roles/${encodeURIComponent(roleName)}/book{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}`, {
+        fetch(withTg(`/group/{{ group[0] }}/events/${eventId}/roles/${encodeURIComponent(roleName)}/book`), {
           method: 'POST',
           body: formData
         }).then(r => {
@@ -1203,7 +1196,7 @@
         formData.append('tab', '{{ active_tab }}');
         formData.append('page', '{{ current_page }}');
         formData.append('per_page', '{{ per_page }}');
-        fetch(`/group/{{ group[0] }}/events/${eventId}/roles/${encodeURIComponent(roleName)}/unbook{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}`, {
+        fetch(withTg(`/group/{{ group[0] }}/events/${eventId}/roles/${encodeURIComponent(roleName)}/unbook`), {
           method: 'POST',
           body: formData
         }).then(r => {
@@ -1228,7 +1221,7 @@
         formData.append('page', '{{ current_page }}');
         formData.append('per_page', '{{ per_page }}');
         
-        fetch('/group/{{ group[0] }}/events/' + eventId + '/delete{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}', {
+        fetch(withTg('/group/{{ group[0] }}/events/' + eventId + '/delete'), {
           method: 'POST',
           body: formData
         })
@@ -1260,7 +1253,7 @@
         const formData = new FormData();
         formData.append('message', message);
         
-        fetch('/group/{{ group[0] }}/send-group-message{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}', {
+        fetch(withTg('/group/{{ group[0] }}/send-group-message'), {
           method: 'POST',
           body: formData
         })
@@ -1282,7 +1275,7 @@
       // Trigger immediate group notification (bot will send on next tick)
       window.notifyNow = function(eventId) {
         if (!confirm('Отправить сообщение в группу сейчас?')) return;
-        fetch(`/group/{{ group[0] }}/events/${eventId}/notify-now{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}`, { method: 'POST' })
+        fetch(withTg(`/group/{{ group[0] }}/events/${eventId}/notify-now`), { method: 'POST' })
           .then(r => r.json())
           .then(data => {
             if (data && data.success) {
@@ -1314,6 +1307,30 @@
           closeCreateEventModal();
         }
       }
+
+      // Delegated actions for buttons with data-action attributes
+      document.addEventListener('click', function(e) {
+        const btn = e.target.closest('button[data-action]');
+        if (!btn) return;
+        const action = btn.dataset.action;
+        const eventId = btn.dataset.eventId;
+        const roleName = btn.dataset.roleName;
+        if (!action) return;
+        switch (action) {
+          case 'delete-event':
+            if (eventId) deleteEvent(eventId);
+            break;
+          case 'book-role':
+            if (eventId && roleName) bookRoleFromRow(btn, eventId, roleName);
+            break;
+          case 'unbook-role':
+            if (eventId && roleName) unbookRole(eventId, roleName);
+            break;
+          case 'notify-now':
+            if (eventId) notifyNow(eventId);
+            break;
+        }
+      });
     </script>
   </body>
   </html>

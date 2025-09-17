@@ -70,6 +70,12 @@ def _require_user(request: Request):
         # Get or create user in database
         user_row = UserRepo.get_by_telegram_id(int(session_user['id']))
         if user_row:
+            # Blocked users are not allowed to use the app
+            try:
+                if len(user_row) >= 7 and user_row[6]:
+                    raise HTTPException(status_code=403, detail="User is blocked")
+            except Exception:
+                pass
             return user_row
     
     # If no session, try to authenticate from Telegram Mini App
@@ -81,6 +87,11 @@ def _require_user(request: Request):
         # Get or create user in database
         user_row = UserRepo.get_by_telegram_id(telegram_user['id'])
         if user_row:
+            try:
+                if len(user_row) >= 7 and user_row[6]:
+                    raise HTTPException(status_code=403, detail="User is blocked")
+            except Exception:
+                pass
             return user_row
     
     # If test mode is enabled, use test user
@@ -305,6 +316,12 @@ async def index(request: Request):
         # Получаем пользователя из БД
         user_row = UserRepo.get_by_telegram_id(telegram_user['id'])
         if user_row:
+            try:
+                if len(user_row) >= 7 and user_row[6]:
+                    clear_user_session(request)
+                    return render('welcome.html', message="Доступ запрещён", user_info=None, request=request)
+            except Exception:
+                pass
             user_id = user_row[0]
             # user_row: (id, telegram_id, username, phone, first_name, last_name)
             username = user_row[2]
@@ -319,12 +336,14 @@ async def index(request: Request):
             is_super = (user_row[1] == SUPERADMIN_ID) if SUPERADMIN_ID else False
             if is_super:
                 groups_all = GroupRepo.list_all()
-                groups = [(gid, title, 'superadmin', chat_id) for (gid, title, chat_id) in groups_all]
+                # Show actual role in group for superadmin (may be None if not a member)
+                groups = [(gid, title, RoleRepo.get_user_role(user_id, gid), chat_id) for (gid, title, chat_id) in groups_all]
             else:
                 groups = GroupRepo.list_user_groups_with_roles(user_id)
             groups_with_counts = []
             for gid, title, role, chat_id in groups:
-                groups_with_counts.append((gid, title, role, GroupRepo.count_group_events(gid), _role_label(role), chat_id))
+                role_label = _role_label(role) if role else 'Отсутствует'
+                groups_with_counts.append((gid, title, role, GroupRepo.count_group_events(gid), role_label, chat_id))
             # If superadmin, also load users list for admin panel
             users = []
             if is_super:
@@ -350,6 +369,12 @@ async def index(request: Request):
         # Получаем пользователя из БД
         user_row = UserRepo.get_by_telegram_id(int(TEST_TELEGRAM_ID))
         if user_row:
+            try:
+                if len(user_row) >= 7 and user_row[6]:
+                    clear_user_session(request)
+                    return render('welcome.html', message="Доступ запрещён", user_info=None, request=request)
+            except Exception:
+                pass
             user_id = user_row[0]
             # user_row: (id, telegram_id, username, phone, first_name, last_name)
             username = user_row[2]
@@ -364,12 +389,13 @@ async def index(request: Request):
             is_super = (user_row[1] == SUPERADMIN_ID) if SUPERADMIN_ID else False
             if is_super:
                 groups_all = GroupRepo.list_all()
-                groups = [(gid, title, 'superadmin', chat_id) for (gid, title, chat_id) in groups_all]
+                groups = [(gid, title, RoleRepo.get_user_role(user_id, gid), chat_id) for (gid, title, chat_id) in groups_all]
             else:
                 groups = GroupRepo.list_user_groups_with_roles(user_id)
             groups_with_counts = []
             for gid, title, role, chat_id in groups:
-                groups_with_counts.append((gid, title, role, GroupRepo.count_group_events(gid), _role_label(role), chat_id))
+                role_label = _role_label(role) if role else 'Отсутствует'
+                groups_with_counts.append((gid, title, role, GroupRepo.count_group_events(gid), role_label, chat_id))
             # If superadmin, also load users list for admin panel
             users = []
             if is_super:
@@ -445,11 +471,20 @@ async def group_view(request: Request, gid: int, tab: str = None, page: int = 1,
             def _fmt_dt_ru(dt_str: str | None) -> str:
                 if not dt_str:
                     return '—'
-                from datetime import datetime as _dt
+                from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+                # Parse as naive then treat as UTC (SQLite datetime('now') is UTC), convert to Europe/Moscow
                 for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
                     try:
-                        d = _dt.strptime(dt_str, fmt)
-                        return d.strftime("%d.%m.%Y %H:%M:%S")
+                        d_naive = _dt.strptime(dt_str, fmt)
+                        d_utc = d_naive.replace(tzinfo=_tz.utc)
+                        try:
+                            from zoneinfo import ZoneInfo
+                            tz_msk = ZoneInfo('Europe/Moscow')
+                            d_local = d_utc.astimezone(tz_msk)
+                        except Exception:
+                            # Fallback fixed offset +3
+                            d_local = d_utc + _td(hours=3)
+                        return d_local.strftime("%d.%m.%Y %H:%M:%S")
                     except Exception:
                         continue
                 return dt_str
@@ -578,7 +613,7 @@ async def group_view(request: Request, gid: int, tab: str = None, page: int = 1,
     archived_events = archived_pagination['events']
     
     event_count = GroupRepo.count_group_events(gid)
-    return render('group.html', group=group, role=(effective_role or 'participant'), is_admin=is_admin, active_events=active_events, archived_events=archived_events, active_pagination=active_pagination, archived_pagination=archived_pagination, booked_ids=booked_ids, responsible_ids=responsible_ids, display_name=display_name, bookings_map=bookings_map, member_options=member_options, member_name_map=member_name_map, event_count=event_count, active_tab=tab or 'active', current_page=page, per_page=per_page, request=request, current_user_id=user_id, audit_labels=audit_labels)
+    return render('group.html', group=group, role=_role_label(effective_role or 'participant'), is_admin=is_admin, active_events=active_events, archived_events=archived_events, active_pagination=active_pagination, archived_pagination=archived_pagination, booked_ids=booked_ids, responsible_ids=responsible_ids, display_name=display_name, bookings_map=bookings_map, member_options=member_options, member_name_map=member_name_map, event_count=event_count, active_tab=tab or 'active', current_page=page, per_page=per_page, request=request, current_user_id=user_id, audit_labels=audit_labels)
 
 
 # --- Event CRUD ---
@@ -929,9 +964,26 @@ async def admin_block_user(request: Request, uid: int, blocked: int = Form(...))
         raise HTTPException(status_code=403, detail="Only superadmin")
     try:
         UserRepo.set_blocked(uid, bool(int(blocked) == 0))  # toggle based on sent value
-        return RedirectResponse(url=f"/?ok=user_blocked", status_code=303)
+        # Preserve tab if provided
+        tab = request.query_params.get('tab')
+        tg_q = request.query_params.get('tg_id')
+        qs = []
+        if tg_q:
+            qs.append(f"tg_id={tg_q}")
+        qs.append("ok=user_blocked")
+        if tab:
+            qs.append(f"tab={tab}")
+        return RedirectResponse(url=f"/?{'&'.join(qs)}", status_code=303)
     except Exception:
-        return RedirectResponse(url=f"/?ok=error", status_code=303)
+        tab = request.query_params.get('tab')
+        tg_q = request.query_params.get('tg_id')
+        qs = []
+        if tg_q:
+            qs.append(f"tg_id={tg_q}")
+        qs.append("ok=error")
+        if tab:
+            qs.append(f"tab={tab}")
+        return RedirectResponse(url=f"/?{'&'.join(qs)}", status_code=303)
 
 @app.post('/admin/users/{uid}/delete')
 async def admin_delete_user(request: Request, uid: int):
@@ -941,9 +993,25 @@ async def admin_delete_user(request: Request, uid: int):
         raise HTTPException(status_code=403, detail="Only superadmin")
     try:
         UserRepo.delete_user(uid)
-        return RedirectResponse(url=f"/?ok=user_deleted", status_code=303)
+        tab = request.query_params.get('tab')
+        tg_q = request.query_params.get('tg_id')
+        qs = []
+        if tg_q:
+            qs.append(f"tg_id={tg_q}")
+        qs.append("ok=user_deleted")
+        if tab:
+            qs.append(f"tab={tab}")
+        return RedirectResponse(url=f"/?{'&'.join(qs)}", status_code=303)
     except Exception:
-        return RedirectResponse(url=f"/?ok=error", status_code=303)
+        tab = request.query_params.get('tab')
+        tg_q = request.query_params.get('tg_id')
+        qs = []
+        if tg_q:
+            qs.append(f"tg_id={tg_q}")
+        qs.append("ok=error")
+        if tab:
+            qs.append(f"tab={tab}")
+        return RedirectResponse(url=f"/?{'&'.join(qs)}", status_code=303)
 
 @app.post('/admin/send-message')
 async def admin_send_message(request: Request, recipient_id: int = Form(...), message: str = Form(...)):
@@ -1236,7 +1304,7 @@ async def convert_event_to_template(request: Request, gid: int, eid: int, kind: 
         pass
 
     try:
-        TemplateGenerator.generate_for_template(template_id)
+        TemplateGenerator.generate_for_template(template_id, created_by_user_id=user_id)
     except Exception:
         pass
 
@@ -1339,7 +1407,7 @@ async def update_template_from_event(request: Request, gid: int, eid: int,
                     TemplateRoleRequirementRepo.replace_all(template_id, [(rname, rreq) for rname, rreq in evt_roles])
             except Exception:
                 pass
-            TemplateGenerator.generate_for_template(template_id)
+            TemplateGenerator.generate_for_template(template_id, created_by_user_id=user_id)
         except Exception:
             pass
 
@@ -1979,9 +2047,14 @@ async def delete_group(request: Request, gid: int):
     urow = _require_user(request)
     user_id = urow[0]
     
-    # Check if user is owner or superadmin
+    # Check if user is owner or global superadmin
     role = RoleRepo.get_user_role(user_id, gid)
-    if role not in ['owner', 'superadmin']:
+    try:
+        from config import SUPERADMIN_ID as CFG_SA
+    except Exception:
+        CFG_SA = None
+    is_global_superadmin = (urow[1] == CFG_SA) if CFG_SA else False  # urow[1] is telegram_id
+    if role != 'owner' and not is_global_superadmin:
         raise HTTPException(status_code=403, detail="Only group owner or superadmin can delete group")
     
     # Delete group - CASCADE will handle all associated data
