@@ -639,10 +639,10 @@ async def group_view(request: Request, gid: int, tab: str = None, page: int = 1,
     display_name = DisplayNameRepo.get_display_name(gid, user_id)
     booked_ids = {eid for (eid, _, _, _) in events if BookingRepo.has_booking(user_id, eid)}
     responsible_ids = {eid for (eid, _, _, responsible_user_id) in events if responsible_user_id == user_id}
-    # Treat superadmin as admin for UI
-    effective_role = role if role else ("superadmin" if is_superadmin_req else None)
+    # For superadmin not in group, show role as None (Отсутствует), но сохраняем права администратора
+    effective_role = role if role else None
     # Global superadmin should also see admin UI
-    is_admin = (effective_role in ("owner", "admin", "superadmin")) if effective_role else is_superadmin_req
+    is_admin = (role in ("owner", "admin", "superadmin")) or is_superadmin_req
     bookings_map = {eid: BookingRepo.list_event_bookings_with_names(gid, eid) for (eid, _, _, _) in events}
     member_rows = GroupRepo.list_group_members(gid)
     member_name_map: dict[int, str] = {}
@@ -816,7 +816,9 @@ async def group_view(request: Request, gid: int, tab: str = None, page: int = 1,
     archived_events = archived_pagination['events']
     
     event_count = GroupRepo.count_group_events(gid)
-    return render('group.html', group=group, role=_role_label(effective_role or 'participant'), is_admin=is_admin, active_events=active_events, archived_events=archived_events, active_pagination=active_pagination, archived_pagination=archived_pagination, booked_ids=booked_ids, responsible_ids=responsible_ids, display_name=display_name, bookings_map=bookings_map, member_options=member_options, member_name_map=member_name_map, event_count=event_count, active_tab=tab or 'active', current_page=page, per_page=per_page, request=request, current_user_id=user_id, audit_labels=audit_labels)
+    # Role label: show localized role if present; otherwise show "Отсутствует"
+    role_label = _role_label(role) if role else 'Отсутствует'
+    return render('group.html', group=group, role=role_label, is_admin=is_admin, active_events=active_events, archived_events=archived_events, active_pagination=active_pagination, archived_pagination=archived_pagination, booked_ids=booked_ids, responsible_ids=responsible_ids, display_name=display_name, bookings_map=bookings_map, member_options=member_options, member_name_map=member_name_map, event_count=event_count, active_tab=tab or 'active', current_page=page, per_page=per_page, request=request, current_user_id=user_id, audit_labels=audit_labels)
 
 
 # --- Event CRUD ---

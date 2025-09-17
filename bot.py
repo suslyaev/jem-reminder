@@ -488,7 +488,16 @@ async def start(message: types.Message):
         for gid in group_ids:
             RoleRepo.confirm_pending_roles(user_id, gid)
         if group_ids:
-            await message.answer(f"Ваш доступ подтвержден в группах: {', '.join(map(str, group_ids))}")
+            # Показать сразу список групп с ролями
+            groups_after = GroupRepo.list_user_groups_with_roles(user_id)
+            from aiogram.utils.keyboard import InlineKeyboardBuilder
+            kb2 = InlineKeyboardBuilder()
+            lines2 = ["Ваш доступ подтвержден. Ваши группы:"]
+            for gid2, title2, role2, chat_id2 in groups_after:
+                role_ru2 = ROLE_RU.get(role2, role2)
+                kb2.button(text=f"{title2} (роль: {role_ru2})", callback_data=f"grp_menu:{gid2}")
+            kb2.adjust(1)
+            await set_menu_message(user_id, message.chat.id, "\n".join(lines2), kb2.as_markup())
         else:
             # If nothing confirmed via id/username, suggest sharing phone number only if there are pending by phone
             if RoleRepo.has_any_pending_by_phone():
