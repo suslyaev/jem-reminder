@@ -144,7 +144,7 @@
         <div class="meta" style="margin-top:6px;">Появится как <strong>Участник</strong>. Роль можно поменять в списке участников (в т.ч. передать владение).</div>
       {% endif %}
 
-      {% if role in ['admin', 'owner', 'superadmin'] %}
+      {% if role in ['owner', 'superadmin'] %}
       <h3>Шаблоны ролей</h3>
       <hr style="margin: 16px 0; border-color: var(--border);">
       <div class="card" style="padding:12px; border-radius:12px; background: var(--card); margin-bottom: 16px;">
@@ -168,6 +168,7 @@
         </form>
       </div>
 
+      {% if role in ['owner', 'superadmin'] %}
       <h3>Шаблоны оповещений</h3>
       <hr style="margin: 16px 0; border-color: var(--border);">
       <div class="tabs" style="margin-bottom: 16px;">
@@ -281,6 +282,7 @@
           <button class="btn" type="submit">Добавить</button>
         </form>
       </div>
+      {% endif %}
     </div>
     <script type="application/json" id="roleTplData">{{ role_templates | tojson }}</script>
 
