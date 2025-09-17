@@ -16,6 +16,18 @@ from config import BOT_TOKEN, SUPERADMIN_ID
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
+@dp.callback_query(lambda c: c.data and c.data.startswith('roles_refresh:'))
+async def cb_roles_refresh(callback: types.CallbackQuery):
+    try:
+        _, eid, gid = callback.data.split(':', 2)
+        eid_i = int(eid); gid_i = int(gid)
+    except Exception as e:
+        return await callback.answer(f"Ошибка: {e}")
+    await callback.answer("Обновлено")
+    try:
+        await refresh_role_keyboard(callback.message, gid_i, eid_i)
+    except Exception:
+        pass
 
 # Роли → русские названия
 ROLE_RU = {
@@ -814,6 +826,11 @@ async def cb_event_notif_add(callback: types.CallbackQuery):
     
     # Add notification with standard text
     EventNotificationRepo.add_notification(eid_i, amount_i, unit, f"Через {format_duration_ru(amount_i, unit)} начало мероприятия")
+    try:
+        from services.repositories import AuditLogRepo
+        AuditLogRepo.add('group_notification_created', user_id=internal_user_id, group_id=gid_i, event_id=eid_i, new_value=f"{amount_i} {unit}")
+    except Exception:
+        pass
     await callback.answer("Добавлено")
     # Refresh view by updating the message directly
     await refresh_event_notifications_view(callback.message, eid_i, gid_i, internal_user_id)
@@ -834,6 +851,11 @@ async def cb_event_notif_del(callback: types.CallbackQuery):
     
     # Delete notification
     EventNotificationRepo.delete_notification(int(notif_id))
+    try:
+        from services.repositories import AuditLogRepo
+        AuditLogRepo.add('group_notification_deleted', user_id=internal_user_id, group_id=gid_i, event_id=eid_i, old_value=str(notif_id))
+    except Exception:
+        pass
     await callback.answer("Удалено")
     # Refresh view by updating the message directly
     await refresh_event_notifications_view(callback.message, eid_i, gid_i, internal_user_id)
@@ -881,6 +903,11 @@ async def cb_personal_notif_add(callback: types.CallbackQuery):
     
     # Add personal notification with standard text
     PersonalEventNotificationRepo.add_notification(internal_user_id, eid_i, amount_i, unit, f"Через {format_duration_ru(amount_i, unit)} начало мероприятия")
+    try:
+        from services.repositories import AuditLogRepo
+        AuditLogRepo.add('personal_notification_created', user_id=internal_user_id, group_id=gid_i, event_id=eid_i, new_value=f"{amount_i} {unit}")
+    except Exception:
+        pass
     await callback.answer("Добавлено")
     # Refresh view by updating the message directly
     await refresh_personal_notifications_view(callback.message, eid_i, gid_i, internal_user_id)
@@ -1112,6 +1139,24 @@ async def cb_role_book(callback: types.CallbackQuery):
     except Exception:
         pass
     if EventRoleAssignmentRepo.assign(eid_i, role_name, user_id):
+        # Seed personal notifications from group personal templates (idempotent)
+        try:
+            from services.repositories import PersonalEventNotificationRepo
+            PersonalEventNotificationRepo.create_from_personal_templates(eid_i, gid_i, user_id)
+        except Exception:
+            pass
+        # Record booking for analytics/history if used elsewhere
+        try:
+            from services.repositories import BookingRepo
+            BookingRepo.add_booking(user_id, eid_i)
+        except Exception:
+            pass
+        # Audit: role booked
+        try:
+            from services.repositories import AuditLogRepo
+            AuditLogRepo.add('role_booked', user_id=user_id, group_id=gid_i, event_id=eid_i, new_value=role_name)
+        except Exception:
+            pass
         await refresh_role_keyboard(callback.message, gid_i, eid_i)
     else:
         await callback.answer("Уже занято", show_alert=False)
@@ -1145,6 +1190,12 @@ async def cb_role_unbook(callback: types.CallbackQuery):
         except Exception:
             pass
     if EventRoleAssignmentRepo.unassign(eid_i, role_name, target_uid):
+        # Audit: role unbooked
+        try:
+            from services.repositories import AuditLogRepo
+            AuditLogRepo.add('role_unbooked', user_id=user_id, group_id=gid_i, event_id=eid_i, old_value=role_name)
+        except Exception:
+            pass
         # Delete personal notifications only if user has no other roles in this event
         try:
             remaining = [uid for _r, uid in EventRoleAssignmentRepo.list_for_event(eid_i)]
@@ -1168,6 +1219,24 @@ async def cb_role_unbook(callback: types.CallbackQuery):
     else:
         await callback.answer("Нельзя снять чужую бронь", show_alert=False)
 
+@dp.callback_query(lambda c: c.data and c.data.startswith('evt_book_toggle:'))
+async def cb_evt_book_toggle(callback: types.CallbackQuery):
+    try:
+        _, eid, gid = callback.data.split(':', 2)
+        eid_i = int(eid); gid_i = int(gid)
+    except Exception as e:
+        return await callback.answer(f"Ошибка: {e}")
+    await callback.answer()
+    # Show role selection keyboard immediately
+    try:
+        await refresh_role_keyboard(callback.message, gid_i, eid_i)
+    except Exception:
+        pass
+    try:
+        await bot.send_message(callback.message.chat.id, "Выберите роль для бронирования")
+    except Exception:
+        pass
+
 async def refresh_role_keyboard(message: types.Message, gid: int, eid: int):
     # Rebuild keyboard for roles
     from services.repositories import EventRoleRequirementRepo, EventRoleAssignmentRepo, DisplayNameRepo
@@ -1186,7 +1255,9 @@ async def refresh_role_keyboard(message: types.Message, gid: int, eid: int):
             label = dn if dn else f"ID:{uid}"
             kb.row(types.InlineKeyboardButton(text=f"✅ {rname}: {label}", callback_data=f"role_unbook:{eid}:{gid}:{rname}"))
         else:
-            kb.row(types.InlineKeyboardButton(text=f"🟢 {rname}: Забронировать", callback_data=f"role_book:{eid}:{gid}:{rname}"))
+            kb.row(types.InlineKeyboardButton(text=f"🟡 {rname}: Забронировать", callback_data=f"role_book:{eid}:{gid}:{rname}"))
+    # Always append refresh button
+    kb.row(types.InlineKeyboardButton(text="🔄 Обновить", callback_data=f"roles_refresh:{eid}:{gid}"))
     try:
         await bot.edit_message_reply_markup(chat_id=message.chat.id, message_id=message.message_id, reply_markup=kb.as_markup())
     except Exception:
@@ -1230,18 +1301,29 @@ async def cb_evt_notify_now(callback: types.CallbackQuery):
         else:
             label = str(resp_uid)
     from aiogram.utils.keyboard import InlineKeyboardBuilder
+    # Build keyboard with per-role actions and update button
     kb = InlineKeyboardBuilder()
-    kb.row(types.InlineKeyboardButton(text=label, callback_data=f"evt_book_toggle:{eid_i}:{gid_i}"))
-    # Build text per spec with responsible line
-    lines = [
-        f"Напоминание по мероприятию \"{name}\".",
-        f"{format_event_time_display(time_str)}",
-    ]
-    if resp_uid:
-        lines.append(f"Ответственный - {label}")
-    else:
-        lines.append("Ответственный еще не назначен")
-    text = "\n".join(lines)
+    try:
+        from services.repositories import EventRoleRequirementRepo, EventRoleAssignmentRepo, DisplayNameRepo
+        reqs = EventRoleRequirementRepo.list_for_event(eid_i)
+        asgs = EventRoleAssignmentRepo.list_for_event(eid_i)
+        asg_map = {}
+        for r, uid in asgs:
+            asg_map.setdefault(r, []).append(uid)
+        for rname, _req in sorted(reqs, key=lambda x: x[0].lower()):
+            assigned = asg_map.get(rname, [])
+            if assigned:
+                uid = assigned[0]
+                dn = DisplayNameRepo.get_display_name(gid_i, uid)
+                label_btn = dn if dn else f"ID:{uid}"
+                kb.row(types.InlineKeyboardButton(text=f"✅ {rname}: {label_btn}", callback_data=f"role_unbook:{eid_i}:{gid_i}:{rname}"))
+            else:
+                kb.row(types.InlineKeyboardButton(text=f"🟡 {rname}: Забронировать", callback_data=f"role_book:{eid_i}:{gid_i}:{rname}"))
+    except Exception:
+        pass
+    kb.row(types.InlineKeyboardButton(text="🔄 Обновить", callback_data=f"roles_refresh:{eid_i}:{gid_i}"))
+    # Build compact text without listing roles
+    text = f"Напоминание по мероприятию \"{name}\".\n{format_event_time_display(time_str)}"
     # Send to group chat
     try:
         await bot.send_message(int(chat_id), text, reply_markup=kb.as_markup())
@@ -2131,48 +2213,11 @@ async def main():
                         # Debug log
                         print(f"[TICK] Group due: gid={gid}, eid={eid}, notify={notify_dt}, now={now}, tb={time_before}{time_unit}")
                         if not DispatchLogRepo.was_sent('event', user_id=None, group_id=gid, event_id=eid, time_before=time_before, time_unit=time_unit):
-                            # Build group message per spec
-                            # Build roles block (assigned/unassigned)
-                            try:
-                                from services.repositories import EventRoleRequirementRepo, EventRoleAssignmentRepo, DisplayNameRepo
-                                role_reqs = EventRoleRequirementRepo.list_for_event(eid)
-                                role_asg = EventRoleAssignmentRepo.list_for_event(eid)
-                                asg_map = {}
-                                for rname, uid in role_asg:
-                                    asg_map.setdefault(rname, []).append(uid)
-                                role_lines = []
-                                for rname, _req in sorted(role_reqs, key=lambda x: x[0].lower()):
-                                    assigned_uids = asg_map.get(rname, [])
-                                    if assigned_uids:
-                                        names = []
-                                        for uid in assigned_uids:
-                                            dn = DisplayNameRepo.get_display_name(gid, uid)
-                                            if dn:
-                                                names.append(dn)
-                                            else:
-                                                u = UserRepo.get_by_id(uid)
-                                                if u and u[2]:
-                                                    names.append(f"@{u[2]}")
-                                                else:
-                                                    names.append(str(uid))
-                                        role_lines.append(f"✅ {rname}: {', '.join(names)}")
-                                    else:
-                                        role_lines.append(f"🟡 {rname}: свободно")
-                            except Exception:
-                                role_lines = []
-
-                            # Build message
+                            # Build compact group message without listing roles
                             lines = [
                                 f"📅 Мероприятие: \"{name}\"",
                                 f"🕒 {format_event_time_display(time_str)}",
                             ]
-                            if role_lines:
-                                lines.append("")
-                                lines.append("Роли:")
-                                lines.extend(role_lines)
-                            else:
-                                lines.append("")
-                                lines.append("Роли не заданы")
                             if message_text:
                                 lines.append("")
                                 lines.append(str(message_text))
@@ -2198,7 +2243,9 @@ async def main():
                                         # Allow unbook intent; handler will verify ownership
                                         kb_ev.row(types.InlineKeyboardButton(text=btn_text, callback_data=f"role_unbook:{eid}:{gid}:{rname}"))
                                     else:
-                                        kb_ev.row(types.InlineKeyboardButton(text=f"🟢 {rname}: Забронировать", callback_data=f"role_book:{eid}:{gid}:{rname}"))
+                                        kb_ev.row(types.InlineKeyboardButton(text=f"🟡 {rname}: Забронировать", callback_data=f"role_book:{eid}:{gid}:{rname}"))
+                                # Add refresh button
+                                kb_ev.row(types.InlineKeyboardButton(text="🔄 Обновить", callback_data=f"roles_refresh:{eid}:{gid}"))
                             except Exception:
                                 pass
                             try:

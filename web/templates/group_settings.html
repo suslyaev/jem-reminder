@@ -43,6 +43,12 @@
       <a class="link" href="/group/{{ group[0] }}{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">← К группе</a>
       <h2>Настройки группы</h2>
 
+      <h3>Ваше имя в группе</h3>
+      <form method="post" action="/group/{{ group[0] }}/display-name/set{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">
+        <input type="text" name="display_name" placeholder="Отображаемое имя" value="{{ current_display_name or '' }}" style="width:300px; margin-bottom:6px;" />
+        <button class="btn" type="submit">Сохранить</button>
+      </form>
+
 
       {% if role in ['admin', 'owner', 'superadmin'] %}
         {% if pending and pending|length > 0 %}
@@ -228,11 +234,6 @@
         {% endif %}
       </div>
       {% else %}
-      <h3>Ваше имя в группе</h3>
-      <form method="post" action="/group/{{ group[0] }}/display-name/set{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">
-        <input type="text" name="display_name" placeholder="Отображаемое имя" value="{{ current_display_name or '' }}" style="width:300px; margin-bottom:6px;" />
-        <button class="btn" type="submit">Сохранить</button>
-      </form>
       {% endif %}
 
       <div id="personal-notifications" class="tab-content" style="display: none;">
