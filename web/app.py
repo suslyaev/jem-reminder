@@ -626,6 +626,13 @@ async def create_event(request: Request, gid: int, name: str = Form(...), time: 
     new_eid = EventRepo.create(gid, name, norm_time or time, created_by_user_id=user_id)
     # Create event notifications from group defaults
     EventNotificationRepo.create_from_group_defaults(new_eid, gid)
+    # Apply group role templates
+    try:
+        from services.repositories import GroupRoleTemplateRepo
+        for rname, req in GroupRoleTemplateRepo.list(gid):
+            EventRoleRequirementRepo.set_for_event(new_eid, rname, int(req or 1))
+    except Exception:
+        pass
     # Personal notifications will be created when responsible person is assigned
     return RedirectResponse(url=f"/group/{gid}?ok=created", status_code=303)
 
@@ -650,11 +657,24 @@ async def create_events_multiple(request: Request, gid: int, items: str | None =
             if t and n:
                 eid = EventRepo.create(gid, n, t, created_by_user_id=user_id)
                 EventNotificationRepo.create_from_group_defaults(eid, gid)
+                # Apply group role templates
+                try:
+                    from services.repositories import GroupRoleTemplateRepo
+                    for rname, req in GroupRoleTemplateRepo.list(gid):
+                        EventRoleRequirementRepo.set_for_event(eid, rname, int(req or 1))
+                except Exception:
+                    pass
                 # Personal notifications will be created when responsible person is assigned
                 created_any = True
             elif t:
                 eid = EventRepo.create(gid, f"Событие {t}", t, created_by_user_id=user_id)
                 EventNotificationRepo.create_from_group_defaults(eid, gid)
+                try:
+                    from services.repositories import GroupRoleTemplateRepo
+                    for rname, req in GroupRoleTemplateRepo.list(gid):
+                        EventRoleRequirementRepo.set_for_event(eid, rname, int(req or 1))
+                except Exception:
+                    pass
                 # Personal notifications will be created when responsible person is assigned
                 created_any = True
             elif n:
@@ -667,12 +687,24 @@ async def create_events_multiple(request: Request, gid: int, items: str | None =
                 time_part, name_part = line.split('|', 1)
                 eid = EventRepo.create(gid, name_part.strip(), _normalize_dt_local(time_part.strip()) or time_part.strip(), created_by_user_id=user_id)
                 EventNotificationRepo.create_from_group_defaults(eid, gid)
+                try:
+                    from services.repositories import GroupRoleTemplateRepo
+                    for rname, req in GroupRoleTemplateRepo.list(gid):
+                        EventRoleRequirementRepo.set_for_event(eid, rname, int(req or 1))
+                except Exception:
+                    pass
                 # Personal notifications will be created when responsible person is assigned
                 created_any = True
             else:
                 t = _normalize_dt_local(line.strip()) or line.strip()
                 eid = EventRepo.create(gid, f"Событие {t}", t, created_by_user_id=user_id)
                 EventNotificationRepo.create_from_group_defaults(eid, gid)
+                try:
+                    from services.repositories import GroupRoleTemplateRepo
+                    for rname, req in GroupRoleTemplateRepo.list(gid):
+                        EventRoleRequirementRepo.set_for_event(eid, rname, int(req or 1))
+                except Exception:
+                    pass
                 # Personal notifications will be created when responsible person is assigned
                 created_any = True
     ok = 'created' if created_any else 'noop'
@@ -751,6 +783,9 @@ async def group_settings(request: Request, gid: int):
     is_super = (urow[1] == CFG_SA) if CFG_SA else False
     group = GroupRepo.get_by_id(gid)
     notifications = NotificationRepo.list_notifications(gid) if (role in ['admin', 'owner', 'superadmin'] or is_super) else []
+    # Load group role templates
+    from services.repositories import GroupRoleTemplateRepo
+    role_templates = GroupRoleTemplateRepo.list(gid) if (role in ['admin', 'owner', 'superadmin'] or is_super) else []
     # Load personal notification templates for this group
     personal_notifications = NotificationRepo.list_personal_notifications(gid) if (role in ['admin', 'owner', 'superadmin'] or is_super) else []
     pending = RoleRepo.list_pending_admins(gid) if (role in ['admin', 'owner', 'superadmin'] or is_super) else []
@@ -778,7 +813,7 @@ async def group_settings(request: Request, gid: int):
     notifications_count = len(notifications)
     personal_notifications_count = len(personal_notifications)
     effective_role = 'superadmin' if is_super else role
-    return render('group_settings.html', group=group, role=effective_role, notifications=notifications, personal_notifications=personal_notifications, pending=pending, admins=admins, members=members, current_display_name=current_display_name, member_display_names=member_display_names, role_map=role_map, event_count=event_count, notifications_count=notifications_count, personal_notifications_count=personal_notifications_count, request=request)
+    return render('group_settings.html', group=group, role=effective_role, notifications=notifications, personal_notifications=personal_notifications, pending=pending, admins=admins, members=members, current_display_name=current_display_name, member_display_names=member_display_names, role_map=role_map, event_count=event_count, notifications_count=notifications_count, personal_notifications_count=personal_notifications_count, role_templates=role_templates, request=request)
 
 
 @app.post('/group/{gid}/settings/notifications/add')
@@ -892,6 +927,22 @@ async def delete_personal_notification(request: Request, gid: int, nid: int, tab
     NotificationRepo.delete_notification(nid)
     tab_param = f"&tab={tab}" if tab else "&tab=personal"
     return RedirectResponse(f"/group/{gid}/settings?ok=personal_notification_deleted&tg_id={tg_id}{tab_param}", status_code=303)
+
+@app.post('/group/{gid}/settings/role-templates/save')
+async def save_role_templates(request: Request, gid: int, role_name: list[str] = Form(None)):
+    tg_id = request.query_params.get('tg_id')
+    urow = _require_user(request)
+    user_id = urow[0]
+    _require_admin(user_id, gid)
+    from services.repositories import GroupRoleTemplateRepo
+    items = []
+    role_name = role_name or []
+    for n in role_name:
+        n = (n or '').strip()
+        if n:
+            items.append((n, 1))
+    GroupRoleTemplateRepo.replace_all(gid, items)
+    return RedirectResponse(f"/group/{gid}/settings?ok=roles_template_saved&tg_id={tg_id}", status_code=303)
 
 @app.post('/group/{gid}/send-message')
 async def send_message_to_user(request: Request, gid: int, recipient_id: int = Form(...), message: str = Form(...)):

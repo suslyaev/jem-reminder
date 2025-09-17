@@ -1411,6 +1411,36 @@ class TemplateGenerationRepo:
             conn.commit()
 
 
+class GroupRoleTemplateRepo:
+    @staticmethod
+    def list(group_id: int) -> List[Tuple[str, int]]:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT role_name, required FROM group_role_templates WHERE group_id = ? ORDER BY role_name", (group_id,))
+            return cur.fetchall()
+
+    @staticmethod
+    def upsert(group_id: int, role_name: str, required: int = 1) -> None:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT id FROM group_role_templates WHERE group_id = ? AND role_name = ?", (group_id, role_name))
+            row = cur.fetchone()
+            if row:
+                cur.execute("UPDATE group_role_templates SET required = ? WHERE id = ?", (int(required), row[0]))
+            else:
+                cur.execute("INSERT INTO group_role_templates (group_id, role_name, required) VALUES (?,?,?)", (group_id, role_name.strip(), int(required)))
+            conn.commit()
+
+    @staticmethod
+    def replace_all(group_id: int, items: List[Tuple[str, int]]) -> None:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("DELETE FROM group_role_templates WHERE group_id = ?", (group_id,))
+            for role_name, required in items:
+                if role_name and role_name.strip() and int(required) > 0:
+                    cur.execute("INSERT INTO group_role_templates (group_id, role_name, required) VALUES (?,?,?)", (group_id, role_name.strip(), int(required)))
+            conn.commit()
+
 class TemplateGenerator:
     @staticmethod
     def _parse_weekdays(s: Optional[str]) -> List[int]:

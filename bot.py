@@ -425,6 +425,12 @@ async def on_chat_member_update(event: ChatMemberUpdated):
         existing = GroupRepo.get_by_chat_id(chat_id)
         if not existing:
             group_id = GroupRepo.create(chat_id, title, owner_user_id)
+            # Create default role template "Ответственный"
+            try:
+                from services.repositories import GroupRoleTemplateRepo
+                GroupRoleTemplateRepo.upsert(group_id, 'Ответственный', 1)
+            except Exception:
+                pass
             # If we know adder, grant owner role
             if owner_user_id is not None:
                 RoleRepo.add_role(owner_user_id, group_id, 'owner', confirmed=True)
@@ -2017,6 +2023,12 @@ def _register_group_if_needed_from_message(message: types.Message) -> None:
         last_name=user.last_name,
     )
     group_id = GroupRepo.create(chat_id, title, owner_user_id)
+    # Create default role template "Ответственный"
+    try:
+        from services.repositories import GroupRoleTemplateRepo
+        GroupRoleTemplateRepo.upsert(group_id, 'Ответственный', 1)
+    except Exception:
+        pass
     RoleRepo.add_role(owner_user_id, group_id, 'owner', confirmed=True)
     # Note: Do not auto-add superadmin to group membership
     NotificationRepo.ensure_defaults(group_id)

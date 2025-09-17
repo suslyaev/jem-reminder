@@ -145,6 +145,29 @@
       {% endif %}
 
       {% if role in ['admin', 'owner', 'superadmin'] %}
+      <h3>Шаблоны ролей</h3>
+      <hr style="margin: 16px 0; border-color: var(--border);">
+      <div class="card" style="padding:12px; border-radius:12px; background: var(--card); margin-bottom: 16px;">
+        {% if not role_templates %}
+          <div class="empty">Пока нет шаблонов ролей</div>
+        {% else %}
+          <ul class="list">
+            {% for rname, req in role_templates %}
+              <li class="item">
+                <div class="title">{{ rname }}</div>
+              </li>
+            {% endfor %}
+          </ul>
+        {% endif %}
+        <form method="post" action="/group/{{ group[0] }}/settings/role-templates/save{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="margin-top:8px;">
+          <div id="roleTplRows"></div>
+          <div style="display:flex; gap:8px; margin-top:8px;">
+            <button class="btn" type="button" id="addRoleTpl">＋ Роль</button>
+            <button class="btn" type="submit">Сохранить</button>
+          </div>
+        </form>
+      </div>
+
       <h3>Шаблоны оповещений</h3>
       <hr style="margin: 16px 0; border-color: var(--border);">
       <div class="tabs" style="margin-bottom: 16px;">
@@ -259,6 +282,7 @@
         </form>
       </div>
     </div>
+    <script type="application/json" id="roleTplData">{{ role_templates | tojson }}</script>
 
     <!-- Delete Group Section -->
     {% if role in ['owner', 'superadmin'] %}
@@ -576,6 +600,34 @@
         window.sendMessage = sendMessage;
         window.closeDeleteGroupModal = closeDeleteGroupModal;
         window.confirmDeleteGroup = confirmDeleteGroup;
+
+        // Role templates editor
+        (function() {
+          const rows = document.getElementById('roleTplRows');
+          const addBtn = document.getElementById('addRoleTpl');
+          if (!rows || !addBtn) return;
+          function addRow(name = '') {
+            const wrap = document.createElement('div');
+            wrap.className = 'item';
+            wrap.style.cssText = 'display:flex; gap:8px; align-items:center; margin-bottom:6px;';
+            wrap.innerHTML = `
+              <input type="text" name="role_name" placeholder="Роль" value="${name}" style="flex:2;">
+              <button type="button" class="btn del" style="background:#ef4444;">✕</button>
+            `;
+            rows.appendChild(wrap);
+            wrap.querySelector('.del').addEventListener('click', () => wrap.remove());
+          }
+          addBtn.addEventListener('click', () => addRow());
+          // Pre-fill existing
+          try {
+            const initial = JSON.parse(document.getElementById('roleTplData').textContent || '[]');
+            initial.forEach(item => {
+              const n = Array.isArray(item) ? item[0] : item;
+              addRow(n);
+            });
+            // Do not auto-add default if empty
+          } catch {}
+        })();
       });
     </script>
   </body>
