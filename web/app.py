@@ -1414,6 +1414,81 @@ async def update_template_from_event(request: Request, gid: int, eid: int,
     return RedirectResponse(f"/group/{gid}/events/{eid}/settings?ok=updated", status_code=303)
 
 
+@app.get('/group/{gid}/analytics', response_class=HTMLResponse)
+async def group_analytics(request: Request, gid: int, start: str | None = None, end: str | None = None, user: int | None = None):
+    urow = _require_user(request)
+    user_id = urow[0]
+    role = RoleRepo.get_user_role(user_id, gid)
+    try:
+        from config import SUPERADMIN_ID as CFG_SA
+    except Exception:
+        CFG_SA = None
+    is_superadmin_req = (urow[1] == CFG_SA) if CFG_SA else False
+    if role is None and not is_superadmin_req:
+        events = EventRepo.list_by_group(gid)
+        if not any(BookingRepo.has_booking(user_id, eid) for eid, _, _, _ in events):
+            raise HTTPException(status_code=403, detail="Access denied")
+
+    group = GroupRepo.get_by_id(gid)
+    member_rows = GroupRepo.list_group_members(gid)
+    members = []
+    for mid, uname in member_rows:
+        dn = DisplayNameRepo.get_display_name(gid, mid)
+        label = dn if dn else (f"@{uname}" if uname else str(mid))
+        members.append({ 'id': mid, 'label': label })
+
+    from datetime import datetime as _dt
+    def parse_dt(s: str | None):
+        if not s:
+            return None
+        for fmt in ("%Y-%m-%d", "%Y-%m-%d %H:%M"):
+            try:
+                return _dt.strptime(s, fmt)
+            except Exception:
+                continue
+        return None
+    dt_start = parse_dt(start)
+    dt_end = parse_dt(end)
+
+    events = EventRepo.list_by_group(gid)
+    from collections import Counter
+    total_by_day = Counter()
+    responsible_set = set()
+    roles_counter = Counter()
+    for eid, name, time_str, resp_uid in events:
+        try:
+            t = _dt.strptime(time_str, "%Y-%m-%d %H:%M")
+        except Exception:
+            continue
+        if dt_start and t < dt_start:
+            continue
+        if dt_end and t > dt_end:
+            continue
+        if user and user != 0:
+            if resp_uid != user:
+                booked = BookingRepo.list_event_bookings_with_names(gid, eid)
+                if not any(uid == user for uid, _name in booked):
+                    continue
+        day_key = t.strftime('%Y-%m-%d')
+        total_by_day[day_key] += 1
+        if resp_uid:
+            responsible_set.add(resp_uid)
+        try:
+            role_reqs = EventRoleRequirementRepo.list_for_event(eid)
+            for rname, req in role_reqs:
+                roles_counter[rname] += int(req or 0)
+        except Exception:
+            pass
+
+    daily = sorted(total_by_day.items())
+    roles = sorted(roles_counter.items(), key=lambda x: (-x[1], x[0]))
+    stats = {
+        'events_total': sum(total_by_day.values()),
+        'unique_responsibles': len(responsible_set),
+    }
+
+    return render('group_analytics.html', group=group, members=members, daily=daily, roles=roles, stats=stats, request=request, gid=gid, start=start or '', end=end or '', user=user or 0)
+
 @app.post('/group/{gid}/events/{eid}/roles/update')
 async def update_event_roles(request: Request, gid: int, eid: int, allow_multi_roles_per_user: int = Form(0), role_names: List[str] = Form(None)):
     urow = _require_user(request)

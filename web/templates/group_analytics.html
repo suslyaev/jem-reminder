@@ -1,0 +1,109 @@
+<!doctype html>
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Аналитика — {{ group[2] if group else '' }}</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <style>
+      .card { padding: 12px; border-radius: 12px; background: var(--card); margin-bottom: 12px; }
+      .grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+      @media (min-width: 900px) { .grid { grid-template-columns: 1fr 1fr; } }
+      .filters { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+      .filters input, .filters select { padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); }
+      .stat { font-size: 14px; color: var(--muted); }
+      .chart-box { height: 300px; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <a class="link" href="/group/{{ gid }}{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">← Назад</a>
+      <h2>Аналитика — {{ group[2] if group else '' }}</h2>
+      <form class="card" method="get" action="/group/{{ gid }}/analytics{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">
+        <div class="filters">
+          <label>С:
+            <input type="date" name="start" value="{{ start.split(' ')[0] if start else '' }}">
+          </label>
+          <label>По:
+            <input type="date" name="end" value="{{ end.split(' ')[0] if end else '' }}">
+          </label>
+          <label>Участник:
+            <select name="user">
+              <option value="0" {% if not user %}selected{% endif %}>Все</option>
+              {% for m in members %}
+                <option value="{{ m.id }}" {% if user == m.id %}selected{% endif %}>{{ m.label }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <button class="btn" type="submit">Показать</button>
+        </div>
+      </form>
+
+      <div class="grid">
+        <div class="card">
+          <h3>Мероприятий по дням</h3>
+          <canvas id="eventsByDay" class="chart-box"></canvas>
+          <div class="stat">Всего: {{ stats.events_total }}</div>
+        </div>
+        <div class="card">
+          <h3>Ответственные за период</h3>
+          <div class="stat">Уникальных ответственных: {{ stats.unique_responsibles }}</div>
+          <canvas id="rolesChart" class="chart-box"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+      const daily = {{ daily | tojson }}; // [["YYYY-MM-DD", count], ...]
+      const roles = {{ roles | tojson }}; // [[role, total_required], ...]
+
+      function lineChart(ctx, labels, data) {
+        return new Chart(ctx, {
+          type: 'line',
+          data: {
+            labels,
+            datasets: [{
+              label: 'Мероприятий',
+              data,
+              borderColor: '#60a5fa',
+              backgroundColor: 'rgba(96,165,250,0.2)',
+              tension: 0.2,
+              fill: true,
+            }]
+          },
+          options: {
+            scales: {
+              y: { beginAtZero: true, ticks: { precision: 0 } }
+            }
+          }
+        });
+      }
+
+      function pieChart(ctx, labels, data) {
+        return new Chart(ctx, {
+          type: 'doughnut',
+          data: {
+            labels,
+            datasets: [{
+              data,
+              backgroundColor: ['#60a5fa','#34d399','#fbbf24','#f472b6','#a78bfa','#ef4444','#10b981','#f59e0b']
+            }]
+          },
+          options: { plugins: { legend: { position: 'bottom' } } }
+        });
+      }
+
+      const days = daily.map(d => d[0]);
+      const counts = daily.map(d => d[1]);
+      const rLabels = roles.map(r => r[0]);
+      const rData = roles.map(r => r[1]);
+
+      const ctx1 = document.getElementById('eventsByDay').getContext('2d');
+      lineChart(ctx1, days, counts);
+      const ctx2 = document.getElementById('rolesChart').getContext('2d');
+      pieChart(ctx2, rLabels, rData);
+    </script>
+  </body>
+</html>
+
+

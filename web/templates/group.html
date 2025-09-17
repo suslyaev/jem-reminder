@@ -225,6 +225,7 @@
           {% if is_admin %}
           <button class="message-btn" onclick="openGroupMessageModal()" style="background: #3b82f6; color: white; border: none; border-radius: 4px; padding: 4px 8px; cursor: pointer; font-size: 12px;">✉️</button>
           {% endif %}
+          <a class="group-gear" href="/group/{{ group[0] }}/analytics{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Аналитика" title="Аналитика" style="text-decoration:none;">📊</a>
           <a class="group-gear" href="/group/{{ group[0] }}/settings{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Настройки">⚙️</a>
         </div>
       </div>
