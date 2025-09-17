@@ -323,21 +323,98 @@ class RoleRepo:
             conn.commit()
 
     @staticmethod
+    def confirm_pending_roles(user_id: int, group_id: int) -> None:
+        """Confirm any pending invites (admin or member) for the user in the group.
+        - If there is a member_* pending record, grant member.
+        - If there is an admin pending record (id/username/phone), grant admin.
+        Clears matched pending records accordingly.
+        """
+        with get_conn() as conn:
+            cur = conn.cursor()
+            # Detect matches by id/username/phone for both admin and member prefixes
+            # Give member if any member_* entry exists
+            cur.execute("SELECT telegram_id, username, phone FROM users WHERE id = ?", (user_id,))
+            row = cur.fetchone()
+            telegram_id = row[0] if row else None
+            username = row[1] if row else None
+            phone = row[2] if row else None
+
+            def has_pending(types_sql: str, value: str) -> bool:
+                cur.execute(f"SELECT 1 FROM pending_admins WHERE group_id=? AND identifier_type IN ({types_sql}) AND {value}", [])
+                return cur.fetchone() is not None
+
+            # Member matches
+            has_member = False
+            # by id
+            if telegram_id is not None:
+                cur.execute("SELECT 1 FROM pending_admins WHERE group_id=? AND identifier_type='member_id' AND identifier=?",
+                            (group_id, str(telegram_id)))
+                has_member = cur.fetchone() is not None or has_member
+            # by username
+            if username:
+                cur.execute("SELECT 1 FROM pending_admins WHERE group_id=? AND identifier_type='member_username' AND LOWER(identifier)=LOWER(?)",
+                            (group_id, username.lstrip('@')))
+                has_member = cur.fetchone() is not None or has_member
+            # by phone
+            if phone:
+                normalized = ''.join(filter(str.isdigit, phone))
+                if normalized.startswith('8'):
+                    normalized = '7' + normalized[1:]
+                cur.execute("SELECT 1 FROM pending_admins WHERE group_id=? AND identifier_type='member_phone' AND REPLACE(REPLACE(REPLACE(identifier,'+',''),'-',''),' ','') LIKE ?",
+                            (group_id, f"%{normalized[-10:]}%"))
+                has_member = cur.fetchone() is not None or has_member
+
+            if has_member:
+                cur.execute("INSERT OR IGNORE INTO user_group_roles (user_id, group_id, role, confirmed) VALUES (?,?,?,1)",
+                            (user_id, group_id, 'member'))
+                # Clear member_* pendings for this user
+                cur.execute("DELETE FROM pending_admins WHERE group_id = ? AND identifier_type='member_id' AND identifier = (SELECT CAST(telegram_id AS TEXT) FROM users WHERE id = ?)", (group_id, user_id))
+                cur.execute("DELETE FROM pending_admins WHERE group_id = ? AND identifier_type='member_username' AND LOWER(identifier) = (SELECT LOWER(COALESCE(username,'')) FROM users WHERE id = ?)", (group_id, user_id))
+                cur.execute("DELETE FROM pending_admins WHERE group_id = ? AND identifier_type='member_phone' AND REPLACE(REPLACE(REPLACE(identifier,'+',''),'-',''),' ','') LIKE '%' || (SELECT substr(REPLACE(REPLACE(REPLACE(COALESCE(phone,''),'+',''),'-',''),' ',''), -10) FROM users WHERE id = ?) || '%'", (group_id, user_id))
+
+            # Admin matches (keep existing behavior)
+            # Insert admin if there is at least one admin-type pending
+            has_admin = False
+            if telegram_id is not None:
+                cur.execute("SELECT 1 FROM pending_admins WHERE group_id = ? AND identifier_type = 'id' AND identifier = ?",
+                            (group_id, str(telegram_id)))
+                has_admin = cur.fetchone() is not None or has_admin
+            if username:
+                cur.execute("SELECT 1 FROM pending_admins WHERE group_id = ? AND identifier_type = 'username' AND LOWER(identifier) = LOWER(?)",
+                            (group_id, username.lstrip('@')))
+                has_admin = cur.fetchone() is not None or has_admin
+            if phone:
+                normalized = ''.join(filter(str.isdigit, phone))
+                if normalized.startswith('8'):
+                    normalized = '7' + normalized[1:]
+                cur.execute("SELECT 1 FROM pending_admins WHERE group_id = ? AND identifier_type = 'phone' AND REPLACE(REPLACE(REPLACE(identifier,'+',''),'-',''),' ','') LIKE ?",
+                            (group_id, f"%{normalized[-10:]}%"))
+                has_admin = cur.fetchone() is not None or has_admin
+
+            if has_admin:
+                cur.execute("INSERT OR IGNORE INTO user_group_roles (user_id, group_id, role, confirmed) VALUES (?,?,?,1)",
+                            (user_id, group_id, 'admin'))
+                cur.execute("DELETE FROM pending_admins WHERE group_id = ? AND identifier_type = 'id' AND identifier = (SELECT CAST(telegram_id AS TEXT) FROM users WHERE id = ?)", (group_id, user_id))
+                cur.execute("DELETE FROM pending_admins WHERE group_id = ? AND identifier_type = 'username' AND LOWER(identifier) = (SELECT LOWER(COALESCE(username,'')) FROM users WHERE id = ?)", (group_id, user_id))
+                cur.execute("DELETE FROM pending_admins WHERE group_id = ? AND identifier_type = 'phone' AND REPLACE(REPLACE(REPLACE(identifier,'+',''),'-',''),' ','') LIKE '%' || (SELECT substr(REPLACE(REPLACE(REPLACE(COALESCE(phone,''),'+',''),'-',''),' ',''), -10) FROM users WHERE id = ?) || '%'", (group_id, user_id))
+            conn.commit()
+
+    @staticmethod
     def find_groups_for_pending(telegram_id: Optional[int], username: Optional[str], phone: Optional[str]) -> List[int]:
         group_ids: List[int] = []
         with get_conn() as conn:
             cur = conn.cursor()
             if telegram_id is not None:
-                cur.execute("SELECT DISTINCT group_id FROM pending_admins WHERE identifier_type='id' AND identifier = ?", (str(telegram_id),))
+                cur.execute("SELECT DISTINCT group_id FROM pending_admins WHERE identifier_type IN ('id','member_id') AND identifier = ?", (str(telegram_id),))
                 group_ids += [r[0] for r in cur.fetchall()]
             if username:
-                cur.execute("SELECT DISTINCT group_id FROM pending_admins WHERE identifier_type='username' AND LOWER(identifier) = LOWER(?)", (username.lstrip('@'),))
+                cur.execute("SELECT DISTINCT group_id FROM pending_admins WHERE identifier_type IN ('username','member_username') AND LOWER(identifier) = LOWER(?)", (username.lstrip('@'),))
                 group_ids += [r[0] for r in cur.fetchall()]
             if phone:
                 normalized = ''.join(filter(str.isdigit, phone))
                 if normalized.startswith('8'):
                     normalized = '7' + normalized[1:]
-                cur.execute("SELECT DISTINCT group_id FROM pending_admins WHERE identifier_type='phone' AND REPLACE(REPLACE(REPLACE(identifier,'+',''),'-',''),' ','') LIKE ?",
+                cur.execute("SELECT DISTINCT group_id FROM pending_admins WHERE identifier_type IN ('phone','member_phone') AND REPLACE(REPLACE(REPLACE(identifier,'+',''),'-',''),' ','') LIKE ?",
                             (f"%{normalized[-10:]}%",))
                 group_ids += [r[0] for r in cur.fetchall()]
         # Unique
@@ -394,7 +471,7 @@ class RoleRepo:
     def has_any_pending_by_phone() -> bool:
         with get_conn() as conn:
             cur = conn.cursor()
-            cur.execute("SELECT 1 FROM pending_admins WHERE identifier_type = 'phone' LIMIT 1")
+            cur.execute("SELECT 1 FROM pending_admins WHERE identifier_type IN ('phone','member_phone') LIMIT 1")
             return cur.fetchone() is not None
 
     @staticmethod

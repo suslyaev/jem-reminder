@@ -52,11 +52,20 @@
 
       {% if role in ['admin', 'owner', 'superadmin'] %}
         {% if pending and pending|length > 0 %}
-          <h3>Ожидающие подтверждения админы</h3>
+          <h3>Ожидающие подтверждения</h3>
           <ul class="list">
+            {% set type_map = {
+              'id': 'ID Telegram',
+              'username': 'Никнейм',
+              'phone': 'Телефон',
+              'member_id': 'ID Telegram',
+              'member_username': 'Никнейм',
+              'member_phone': 'Телефон',
+              'member_unknown': 'Идентификатор'
+            } %}
             {% for pid, identifier, itype, created_by, created_at in pending %}
               <li class="item">
-                <div class="title">{{ identifier }} <span class="meta">({{ itype }}) - Не подтвержден</span></div>
+                <div class="title">{{ identifier }} <span class="meta">({{ type_map.get(itype, itype) }}) - Не подтвержден</span></div>
                 <form method="post" action="/group/{{ group[0] }}/settings/admins/pending/{{ pid }}/delete{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="margin-top:6px;">
                   <button class="btn" type="submit" style="background:#ef4444;">Удалить приглашение</button>
                 </form>
@@ -446,7 +455,7 @@
         }
         
         if (ok) {
-          const map = { name_saved: 'Имя сохранено', member_name_saved: 'Имя участника сохранено', member_made_admin: 'Участник добавлен в ожидающие админы', notification_added: 'Групповое оповещение добавлено', notification_deleted: 'Групповое оповещение удалено', personal_notification_added: 'Личное оповещение добавлено', personal_notification_deleted: 'Личное оповещение удалено', parse_error: 'Ошибка парсинга. Используйте формат: за 1 день, за 2 часа и т.д.', method_error: 'Ошибка: форма отправлена неправильным методом' };
+          const map = { name_saved: 'Имя сохранено', member_name_saved: 'Имя участника сохранено', member_made_admin: 'Участник добавлен в ожидающие', notification_added: 'Групповое оповещение добавлено', notification_deleted: 'Групповое оповещение удалено', personal_notification_added: 'Личное оповещение добавлено', personal_notification_deleted: 'Личное оповещение удалено', parse_error: 'Ошибка парсинга. Используйте формат: за 1 день, за 2 часа и т.д.', method_error: 'Ошибка: форма отправлена неправильным методом' };
           if (map[ok]) {
             // Create toast notification
             const toast = document.createElement('div');

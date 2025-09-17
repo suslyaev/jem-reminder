@@ -1781,6 +1781,31 @@ async def group_audit(request: Request, gid: int):
 
     return render('group_audit.html', request=request, gid=gid, audit_items=audit_items, audit_total=audit_total, audit_page=page, audit_per_page=per_page, audit_events=audit_events, event_filter=(eflt or ''), group=GroupRepo.get_by_id(gid))
 
+@app.post('/group/{gid}/settings/admins/pending/{pid}/delete')
+async def delete_pending_invite(request: Request, gid: int, pid: int):
+    urow = _require_user(request)
+    user_id = urow[0]
+    # Allow owner/admin/superadmin or global superadmin
+    role = RoleRepo.get_user_role(user_id, gid)
+    try:
+        from config import SUPERADMIN_ID as CFG_SA
+    except Exception:
+        CFG_SA = None
+    is_super = (urow[1] == CFG_SA) if CFG_SA else False
+    if role not in ['owner', 'admin', 'superadmin'] and not is_super:
+        raise HTTPException(status_code=403, detail="Access denied")
+    ok = 'pending_deleted'
+    try:
+        RoleRepo.delete_pending(pid)
+    except Exception:
+        ok = 'error'
+    tg_q = request.query_params.get('tg_id')
+    qs = []
+    if tg_q:
+        qs.append(f"tg_id={tg_q}")
+    qs.append(f"ok={ok}")
+    return RedirectResponse(url=f"/group/{gid}/settings?{'&'.join(qs)}", status_code=303)
+
 @app.post('/group/{gid}/events/{eid}/template/update')
 async def update_template_from_event(request: Request, gid: int, eid: int,
                                      repeat_every: Optional[int] = Form(None),
@@ -2637,19 +2662,16 @@ async def add_group_member(request: Request, gid: int, identifier_type: str = Fo
                 tid = int(value)
             except Exception:
                 return RedirectResponse(f"/group/{gid}/settings?ok=member_not_found", status_code=303)
-            u = UserRepo.get_by_telegram_id(tid)
-            if not u:
-                # Create minimal user record
-                UserRepo.upsert_user(tid, None, None, None, None)
-                u = UserRepo.get_by_telegram_id(tid)
-            target_user_id = u[0] if u else None
+            # For Telegram ID, always create pending invite first
+            RoleRepo.add_pending_admin(gid, str(tid), 'member_id', user_id)
+            ok_code = 'member_pending'
+            target_user_id = None
         elif identifier_type == 'username':
             uname = value.lstrip('@')
-            u = UserRepo.get_by_username(uname)
-            if u:
-                target_user_id = u[0]
-            else:
-                ok_code = 'member_not_found'
+            # For username, always create pending invite first
+            RoleRepo.add_pending_admin(gid, uname, 'member_username', user_id)
+            ok_code = 'member_pending'
+            target_user_id = None
         elif identifier_type == 'phone':
             # Find by last 10 digits
             normalized = ''.join(filter(str.isdigit, value))
@@ -2663,14 +2685,18 @@ async def add_group_member(request: Request, gid: int, identifier_type: str = Fo
                 if row:
                     target_user_id = row[0]
                 else:
-                    ok_code = 'member_not_found'
+                    # create pending member by phone (store last 10 digits only)
+                    RoleRepo.add_pending_admin(gid, normalized[-10:], 'member_phone', user_id)
+                    ok_code = 'member_pending'
         else:
-            ok_code = 'member_not_found'
+            # fallback: create a member pending invite with raw identifier
+            RoleRepo.add_pending_admin(gid, value, 'member_unknown', user_id)
+            ok_code = 'member_pending'
 
         if target_user_id:
-            # Add as confirmed member
+            # Add as confirmed member (only when we resolved a user directly, e.g., phone match)
             RoleRepo.add_role(target_user_id, gid, 'member', confirmed=True)
-        ok_code = 'member_added'
+            ok_code = 'member_added'
     except Exception:
         ok_code = 'member_error'
 

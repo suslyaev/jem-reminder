@@ -482,13 +482,13 @@ async def start(message: types.Message):
         kb.adjust(1)
     await set_menu_message(user_id, message.chat.id, "\n".join(lines), kb.as_markup())
 
-    # Check if user matches any pending admins and confirm in those groups
+    # Check if user matches any pending invites and confirm in those groups
     try:
         group_ids = RoleRepo.find_groups_for_pending(telegram_id=user.id, username=user.username, phone=None)
         for gid in group_ids:
-            RoleRepo.confirm_admin_if_pending(user_id, gid)
+            RoleRepo.confirm_pending_roles(user_id, gid)
         if group_ids:
-            await message.answer(f"Ваш доступ админа подтвержден в группах: {', '.join(map(str, group_ids))}")
+            await message.answer(f"Ваш доступ подтвержден в группах: {', '.join(map(str, group_ids))}")
         else:
             # If nothing confirmed via id/username, suggest sharing phone number only if there are pending by phone
             if RoleRepo.has_any_pending_by_phone():
@@ -1795,17 +1795,22 @@ async def on_freeform_input(message: types.Message):
 
     # 4) Обработка контакта для подтверждения по телефону
     if message.contact and message.from_user and message.contact.user_id == message.from_user.id:
-        phone = message.contact.phone_number
-        # Обновим телефон юзера и попробуем подтвердить доступы
+        raw = message.contact.phone_number or ''
+        # Нормализуем до последних 10 цифр
+        digits = ''.join(ch for ch in raw if ch.isdigit())
+        if digits.startswith('8') and len(digits) >= 11:
+            digits = '7' + digits[1:]
+        phone = digits[-10:]
+        # Обновим телефон юзера (храним последние 10 цифр) и попробуем подтвердить доступы
         urow = UserRepo.get_by_telegram_id(message.from_user.id)
         if urow:
             UserRepo.update_phone(urow[0], phone)
             groups = RoleRepo.find_groups_for_pending(telegram_id=None, username=None, phone=phone)
             for gid in groups:
-                RoleRepo.confirm_admin_if_pending(urow[0], gid)
+                RoleRepo.confirm_pending_roles(urow[0], gid)
             if groups:
                 await message.answer(
-                    f"Телефон получен. Ваш доступ админа подтвержден в группах: {', '.join(map(str, groups))}",
+                    f"Телефон получен. Ваш доступ подтвержден в группах: {', '.join(map(str, groups))}",
                     reply_markup=ReplyKeyboardRemove(),
                 )
             else:
