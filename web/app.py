@@ -779,8 +779,13 @@ async def group_view(request: Request, gid: int, tab: str = None, page: int = 1,
         
         # Проверяем, прошло ли мероприятие
         try:
-            # Парсим время мероприятия
-            event_time = datetime.strptime(time_str, "%Y-%m-%d %H:%M")
+            # Парсим время мероприятия (поддерживаем формат с секундами)
+            try:
+                event_time = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                # Если формат без секунд, пробуем старый формат
+                event_time = datetime.strptime(time_str, "%Y-%m-%d %H:%M")
+            
             if event_time < now:
                 all_archived_events.append(event_data)
             else:
@@ -1952,7 +1957,10 @@ async def group_analytics(request: Request, gid: int, start: str | None = None, 
     roles_counter = Counter()
     for eid, name, time_str, resp_uid in events:
         try:
-            t = _dt.strptime(time_str, "%Y-%m-%d %H:%M")
+            try:
+                t = _dt.strptime(time_str, "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                t = _dt.strptime(time_str, "%Y-%m-%d %H:%M")
         except Exception:
             continue
         if dt_start and t < dt_start:
@@ -2085,7 +2093,10 @@ async def add_event_notification_absolute(request: Request, gid: int, eid: int, 
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
     
-    event_time = datetime.strptime(event[2], "%Y-%m-%d %H:%M")
+    try:
+        event_time = datetime.strptime(event[2], "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        event_time = datetime.strptime(event[2], "%Y-%m-%d %H:%M")
     at_norm = _normalize_dt_local(datetime_str)
     try:
         at_dt = datetime.strptime(at_norm, "%Y-%m-%d %H:%M") if at_norm else None
@@ -2227,7 +2238,10 @@ async def add_personal_event_notification_absolute(request: Request, gid: int, e
     if not event:
         return RedirectResponse(f"/group/{gid}/events/{eid}/settings?ok=error", status_code=303)
     
-    event_time = datetime.strptime(event[2], "%Y-%m-%d %H:%M")
+    try:
+        event_time = datetime.strptime(event[2], "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        event_time = datetime.strptime(event[2], "%Y-%m-%d %H:%M")
     at_norm = _normalize_dt_local(datetime_str)
     try:
         notification_time = datetime.strptime(at_norm, "%Y-%m-%d %H:%M") if at_norm else None
