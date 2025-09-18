@@ -16,6 +16,201 @@ from config import BOT_TOKEN, SUPERADMIN_ID
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
+
+def is_user_blocked_bot(telegram_id: int) -> bool:
+    """Check if user is blocked in the system by looking at the blocked field in database."""
+    try:
+        user_row = UserRepo.get_by_telegram_id(telegram_id)
+        if user_row:
+            # user_row contains: (id, telegram_id, username, phone, first_name, last_name, blocked)
+            blocked = user_row[6] if len(user_row) > 6 else 0
+            if blocked == 1:
+                print(f"[BLOCKED_CHECK] User {telegram_id} is blocked in the system")
+                return True
+        return False
+    except Exception as e:
+        print(f"[BLOCKED_CHECK] Error checking blocked status for user {telegram_id}: {e}")
+        return False
+
+async def handle_blocked_user_interaction(user_id: int, telegram_id: int, interaction_type: str = "interaction"):
+    """Handle interactions from blocked users by logging and ignoring them."""
+    print(f"[BLOCKED_USER] Ignoring {interaction_type} from user {user_id} (telegram_id: {telegram_id}) - user has blocked the bot")
+    return True  # Return True to indicate the interaction was handled (ignored)
+
+async def send_missed_notifications():
+    """Send notifications that were missed due to bot downtime (within last 30 minutes)."""
+    from services.repositories import get_conn
+    msk = ZoneInfo("Europe/Moscow")
+    now = datetime.now(msk)
+    cutoff_time = now - timedelta(minutes=30)
+    
+    print(f"[MISSED_NOTIFICATIONS] Checking for missed notifications since {cutoff_time}")
+    
+    # Check for missed group notifications
+    with get_conn() as conn:
+        cur = conn.cursor()
+        # Get all group notifications that should have been sent in the last 30 minutes
+        cur.execute("""
+            SELECT en.event_id, en.time_before, en.time_unit, en.message_text, 
+                   e.name, e.time, e.group_id
+            FROM event_notifications en
+            JOIN events e ON en.event_id = e.id
+            WHERE NOT EXISTS (
+                SELECT 1 FROM notification_dispatch_log ndl 
+                WHERE ndl.kind = 'event' 
+                AND ndl.event_id = en.event_id 
+                AND ndl.time_before = en.time_before 
+                AND ndl.time_unit = en.time_unit
+            )
+        """)
+        missed_group_notifications = cur.fetchall()
+        
+        for event_id, time_before, time_unit, message_text, event_name, event_time, group_id in missed_group_notifications:
+            try:
+                # Parse event time
+                evt_dt = None
+                for fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M'):
+                    try:
+                        evt_dt = datetime.strptime(event_time, fmt).replace(tzinfo=msk)
+                        break
+                    except Exception:
+                        pass
+                
+                if evt_dt is None:
+                    continue
+                
+                # Calculate when notification should have been sent
+                delta_minutes = 0
+                if time_unit == 'minutes':
+                    delta_minutes = time_before
+                elif time_unit == 'hours':
+                    delta_minutes = time_before * 60
+                elif time_unit == 'days':
+                    delta_minutes = time_before * 1440
+                elif time_unit == 'weeks':
+                    delta_minutes = time_before * 10080
+                elif time_unit == 'months':
+                    delta_minutes = time_before * 43200
+                
+                notify_dt = evt_dt - timedelta(minutes=delta_minutes)
+                
+                # Check if notification was supposed to be sent in the last 30 minutes
+                if cutoff_time <= notify_dt <= now:
+                    print(f"[MISSED_NOTIFICATIONS] Sending missed group notification for event {event_id}")
+                    
+                    # Send group notification
+                    group_row = GroupRepo.get_by_id(group_id)
+                    if group_row:
+                        chat_id = group_row[1]
+                        text = f"🔔 Напоминание о мероприятии\n📅 {event_name}\n🕒 {format_event_time_display(event_time)}"
+                        if message_text:
+                            text += f"\n\n{message_text}"
+                        
+                        try:
+                            await bot.send_message(chat_id, text)
+                            DispatchLogRepo.mark_sent('event', user_id=None, group_id=group_id, event_id=event_id, time_before=time_before, time_unit=time_unit)
+                            print(f"[MISSED_NOTIFICATIONS] Sent missed group notification for event {event_id}")
+                        except Exception as e:
+                            print(f"[MISSED_NOTIFICATIONS] Failed to send missed group notification for event {event_id}: {e}")
+                            
+            except Exception as e:
+                print(f"[MISSED_NOTIFICATIONS] Error processing missed group notification for event {event_id}: {e}")
+        
+        # Check for missed personal notifications
+        cur.execute("""
+            SELECT pen.user_id, pen.event_id, pen.time_before, pen.time_unit, pen.message_text,
+                   e.name, e.time, e.group_id
+            FROM personal_event_notifications pen
+            JOIN events e ON pen.event_id = e.id
+            WHERE NOT EXISTS (
+                SELECT 1 FROM notification_dispatch_log ndl 
+                WHERE ndl.kind = 'personal' 
+                AND ndl.user_id = pen.user_id
+                AND ndl.event_id = pen.event_id 
+                AND ndl.time_before = pen.time_before 
+                AND ndl.time_unit = pen.time_unit
+            )
+        """)
+        missed_personal_notifications = cur.fetchall()
+        
+        for user_id, event_id, time_before, time_unit, message_text, event_name, event_time, group_id in missed_personal_notifications:
+            try:
+                # Parse event time
+                evt_dt = None
+                for fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M'):
+                    try:
+                        evt_dt = datetime.strptime(event_time, fmt).replace(tzinfo=msk)
+                        break
+                    except Exception:
+                        pass
+                
+                if evt_dt is None:
+                    continue
+                
+                # Calculate when notification should have been sent
+                delta_minutes = 0
+                if time_unit == 'minutes':
+                    delta_minutes = time_before
+                elif time_unit == 'hours':
+                    delta_minutes = time_before * 60
+                elif time_unit == 'days':
+                    delta_minutes = time_before * 1440
+                elif time_unit == 'weeks':
+                    delta_minutes = time_before * 10080
+                elif time_unit == 'months':
+                    delta_minutes = time_before * 43200
+                
+                notify_dt = evt_dt - timedelta(minutes=delta_minutes)
+                
+                # Check if notification was supposed to be sent in the last 30 minutes
+                if cutoff_time <= notify_dt <= now:
+                    print(f"[MISSED_NOTIFICATIONS] Sending missed personal notification for event {event_id} to user {user_id}")
+                    
+                    # Get user info
+                    u = UserRepo.get_by_id(user_id)
+                    if u:
+                        _iid, _tid, _uname, _phone, _first, _last, _blocked = u
+                        
+                        # Build personal message
+                        grp_row = GroupRepo.get_by_id(group_id)
+                        group_title = grp_row[2] if grp_row else f"Группа {group_id}"
+                        
+                        # Find user's roles for this event
+                        try:
+                            from services.repositories import EventRoleAssignmentRepo
+                            user_roles = [r for r, uid in EventRoleAssignmentRepo.list_for_event(event_id) if uid == user_id]
+                        except Exception:
+                            user_roles = []
+                        
+                        role_info = f"Роли: {', '.join(user_roles)}" if user_roles else "Роль не указана"
+                        lines = [
+                            f"🔔 Личное напоминание в группе \"{group_title}\"",
+                            f"📅 Мероприятие: \"{event_name}\"",
+                            f"🕒 {format_event_time_display(event_time)}",
+                            role_info,
+                        ]
+                        if message_text:
+                            lines.append("")
+                            lines.append(str(message_text))
+                        text = "\n".join(lines)
+                        
+                        try:
+                            await bot.send_message(_tid, text)
+                            DispatchLogRepo.mark_sent('personal', user_id=user_id, group_id=None, event_id=event_id, time_before=time_before, time_unit=time_unit)
+                            print(f"[MISSED_NOTIFICATIONS] Sent missed personal notification for event {event_id} to user {user_id}")
+                        except Exception as e:
+                            # Check if user blocked the bot
+                            if "bot was blocked by the user" in str(e).lower() or "chat not found" in str(e).lower():
+                                print(f"[MISSED_NOTIFICATIONS] User {user_id} (telegram_id: {_tid}) blocked the bot. Marking as sent.")
+                                DispatchLogRepo.mark_sent('personal', user_id=user_id, group_id=None, event_id=event_id, time_before=time_before, time_unit=time_unit)
+                            else:
+                                print(f"[MISSED_NOTIFICATIONS] Failed to send missed personal notification for event {event_id} to user {user_id}: {e}")
+                                
+            except Exception as e:
+                print(f"[MISSED_NOTIFICATIONS] Error processing missed personal notification for event {event_id} to user {user_id}: {e}")
+    
+    print(f"[MISSED_NOTIFICATIONS] Finished checking for missed notifications")
+
 @dp.callback_query(lambda c: c.data and c.data.startswith('roles_refresh:'))
 async def cb_roles_refresh(callback: types.CallbackQuery):
     try:
@@ -461,6 +656,12 @@ async def on_chat_member_update(event: ChatMemberUpdated):
 @dp.message(CommandStart())
 async def start(message: types.Message):
     user = message.from_user
+    
+    # Check if user is blocked in the system
+    if is_user_blocked_bot(user.id):
+        await handle_blocked_user_interaction(None, user.id, "start command")
+        return
+    
     user_id = UserRepo.upsert_user(
         telegram_id=user.id,
         username=user.username,
@@ -535,6 +736,12 @@ async def start(message: types.Message):
 @dp.callback_query(lambda c: c.data and c.data.startswith('grp_events:'))
 async def cb_group_events(callback: types.CallbackQuery):
     print(f"DEBUG: cb_group_events called with data: {callback.data}")
+    
+    # Check if user is blocked in the system
+    if is_user_blocked_bot(callback.from_user.id):
+        await handle_blocked_user_interaction(None, callback.from_user.id, "group events callback")
+        return
+    
     gid = int(callback.data.split(':', 1)[1])
     await safe_answer(callback)
     from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -584,6 +791,12 @@ async def cb_group_events(callback: types.CallbackQuery):
 @dp.callback_query(lambda c: c.data and c.data.startswith('evt_open:'))
 async def cb_event_open(callback: types.CallbackQuery):
     print(f"DEBUG: cb_event_open called with data: {callback.data}")
+    
+    # Check if user is blocked in the system
+    if is_user_blocked_bot(callback.from_user.id):
+        await handle_blocked_user_interaction(None, callback.from_user.id, "event open callback")
+        return
+    
     try:
         _, eid, gid = callback.data.split(':')
         eid_i = int(eid)
@@ -1529,6 +1742,11 @@ async def cb_notif_add_free(callback: types.CallbackQuery):
 async def on_freeform_input(message: types.Message):
     # Обрабатываем произвольный ввод для добавления оповещений
     uid = message.from_user.id
+    
+    # Check if user is blocked in the system
+    if is_user_blocked_bot(uid):
+        await handle_blocked_user_interaction(None, uid, "freeform input")
+        return
     # 1) Ожидание произвольного срока для уведомлений
     ctx = AWAITING_NOTIF_ADD.get(uid)
     if ctx is not None:
@@ -1718,7 +1936,7 @@ async def on_freeform_input(message: types.Message):
                 if resp_uid:
                     u = UserRepo.get_by_id(resp_uid)
                     if u:
-                        _iid, _tid, _uname, _phone, _first, _last = u
+                        _iid, _tid, _uname, _phone, _first, _last, _blocked = u
                         if _uname:
                             resp_text2 = f"@{_uname}"
                         elif _first or _last:
@@ -2150,6 +2368,11 @@ async def log_callback(callback: types.CallbackQuery):
 async def main():
     from database.init_db import init_db
     init_db()
+    
+    # Check for missed notifications on startup
+    print("[STARTUP] Checking for missed notifications...")
+    await send_missed_notifications()
+    
     # Start scheduler for notifications
     try:
         from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -2213,8 +2436,8 @@ async def main():
                     elif time_unit == 'months':
                         delta_minutes = time_before * 43200
                     notify_dt = evt_dt - timedelta(minutes=delta_minutes)
-                    # if it's due within the last minute window
-                    if notify_dt <= now < (notify_dt + timedelta(minutes=1)):
+                    # if it's due within the last 5 minute window (to handle bot restarts)
+                    if notify_dt <= now < (notify_dt + timedelta(minutes=5)):
                         # Debug log
                         print(f"[TICK] Group due: gid={gid}, eid={eid}, notify={notify_dt}, now={now}, tb={time_before}{time_unit}")
                         if not DispatchLogRepo.was_sent('event', user_id=None, group_id=gid, event_id=eid, time_before=time_before, time_unit=time_unit):
@@ -2281,12 +2504,12 @@ async def main():
                     elif time_unit == 'months':
                         delta_minutes = time_before * 43200
                     notify_dt = evt_dt - timedelta(minutes=delta_minutes)
-                    if notify_dt <= now < (notify_dt + timedelta(minutes=1)):
+                    if notify_dt <= now < (notify_dt + timedelta(minutes=5)):
                         print(f"[TICK] Personal due: eid={eid}, uid={user_id}, notify={notify_dt}, now={now}, tb={time_before}{time_unit}")
                         if not DispatchLogRepo.was_sent('personal', user_id=user_id, group_id=None, event_id=eid, time_before=time_before, time_unit=time_unit):
                             u = UserRepo.get_by_id(user_id)
                             if u:
-                                _iid, _tid, _uname, _phone, _first, _last = u
+                                _iid, _tid, _uname, _phone, _first, _last, _blocked = u
                                 # Build personal message per spec
                                 grp_row = GroupRepo.get_by_id(gid)
                                 group_title = grp_row[2] if grp_row else f"Группа {gid}"
@@ -2310,8 +2533,14 @@ async def main():
                                 try:
                                     await bot.send_message(_tid, text)
                                     DispatchLogRepo.mark_sent('personal', user_id=user_id, group_id=None, event_id=eid, time_before=time_before, time_unit=time_unit)
-                                except Exception:
-                                    pass
+                                    print(f"[TICK] Personal notification sent successfully to user {user_id} (telegram_id: {_tid})")
+                                except Exception as e:
+                                    # Check if user blocked the bot
+                                    if "bot was blocked by the user" in str(e).lower() or "chat not found" in str(e).lower():
+                                        print(f"[TICK] User {user_id} (telegram_id: {_tid}) blocked the bot or chat not found. Marking as sent to avoid retry.")
+                                        DispatchLogRepo.mark_sent('personal', user_id=user_id, group_id=None, event_id=eid, time_before=time_before, time_unit=time_unit)
+                                    else:
+                                        print(f"[TICK] Failed to send personal notification to user {user_id} (telegram_id: {_tid}): {e}")
 
     scheduler.add_job(tick_send_due, 'interval', minutes=1, id='notify_tick')
     scheduler.start()
