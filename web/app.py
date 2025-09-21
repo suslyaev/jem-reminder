@@ -2251,26 +2251,16 @@ async def add_personal_event_notification_absolute(request: Request, gid: int, e
     if not notification_time:
         return RedirectResponse(f"/group/{gid}/events/{eid}/settings?ok=parse_error", status_code=303)
     
-    # Calculate difference in minutes
-    delta = event_time - notification_time
-    minutes_before = int(delta.total_seconds() / 60)
-    
-    if minutes_before <= 0:
+    # Calculate difference in minutes (same logic as group notifications)
+    delta_seconds = int((event_time - notification_time).total_seconds())
+    if delta_seconds <= 0:
         return RedirectResponse(f"/group/{gid}/events/{eid}/settings?ok=parse_error", status_code=303)
     
-    # Convert to appropriate unit
-    if minutes_before < 60:
-        time_before = minutes_before
-        time_unit = 'minutes'
-    elif minutes_before < 1440:  # 24 hours
-        time_before = minutes_before // 60
-        time_unit = 'hours'
-    else:
-        time_before = minutes_before // 1440
-        time_unit = 'days'
+    # Store in minutes by default (same as group notifications)
+    minutes = max(delta_seconds // 60, 1)
     
     # Add notification (repository handles duplicate checking internally)
-    PersonalEventNotificationRepo.add_notification(user_id, eid, time_before, time_unit, message_text)
+    PersonalEventNotificationRepo.add_notification(user_id, eid, minutes, 'minutes', message_text)
     return RedirectResponse(f"/group/{gid}/events/{eid}/settings?ok=personal_notification_added&tab=personal&tg_id={tg_id}", status_code=303)
 
 @app.post('/group/{gid}/events/{eid}/personal-notifications/{nid}/delete')

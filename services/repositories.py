@@ -984,11 +984,15 @@ class PersonalEventNotificationRepo:
     def add_notification(user_id: int, event_id: int, time_before: int, time_unit: str, message_text: Optional[str] = None) -> int:
         with get_conn() as conn:
             cur = conn.cursor()
-            # Check if notification already exists (same logic as EventNotificationRepo)
-            cur.execute("SELECT id FROM personal_event_notifications WHERE user_id = ? AND event_id = ? AND time_before = ? AND time_unit = ? AND (message_text = ? OR (message_text IS NULL AND ? IS NULL))",
-                        (user_id, event_id, time_before, time_unit, message_text, message_text))
+            # Check if notification already exists (based on UNIQUE constraint: user_id, event_id, time_before, time_unit)
+            cur.execute("SELECT id FROM personal_event_notifications WHERE user_id = ? AND event_id = ? AND time_before = ? AND time_unit = ?",
+                        (user_id, event_id, time_before, time_unit))
             existing = cur.fetchone()
             if existing:
+                # Update message_text if different
+                cur.execute("UPDATE personal_event_notifications SET message_text = ? WHERE id = ?",
+                            (message_text, existing[0]))
+                conn.commit()
                 return existing[0]  # Return existing ID instead of creating duplicate
             
             cur.execute("INSERT INTO personal_event_notifications (user_id, event_id, time_before, time_unit, message_text) VALUES (?,?,?,?,?)",
