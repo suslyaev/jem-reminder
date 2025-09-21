@@ -570,7 +570,7 @@ def parse_ru_datetime(text: str) -> datetime | None:
         settings={
             'PREFER_DATES_FROM': 'future',
             'DATE_ORDER': 'DMY',
-            'TIMEZONE': 'UTC',
+            'TIMEZONE': 'Europe/Moscow',
             'RETURN_AS_TIMEZONE_AWARE': False,
         },
     )
