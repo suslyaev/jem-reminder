@@ -192,13 +192,13 @@ async def send_missed_notifications():
                         except Exception:
                             user_roles = []
                         
-                        role_info = f"Роли: {', '.join(user_roles)}" if user_roles else "Роль не указана"
                         lines = [
                             f"🔔 Личное напоминание в группе \"{group_title}\"",
                             f"📅 Мероприятие: \"{event_name}\"",
                             f"🕒 {format_event_time_display(event_time)}",
-                            role_info,
                         ]
+                        if user_roles:
+                            lines.append(f"Роли: {', '.join(user_roles)}")
                         if message_text:
                             lines.append("")
                             lines.append(str(message_text))
@@ -2529,13 +2529,13 @@ async def main():
                                     user_roles = [r for r, uid in EventRoleAssignmentRepo.list_for_event(eid) if uid == user_id]
                                 except Exception:
                                     user_roles = []
-                                role_info = f"Роли: {', '.join(user_roles)}" if user_roles else "Роль не указана"
                                 lines = [
                                     f"🔔 Личное напоминание в группе \"{group_title}\"",
                                     f"📅 Мероприятие: \"{name}\"",
                                     f"🕒 {format_event_time_display(time_str)}",
-                                    role_info,
                                 ]
+                                if user_roles:
+                                    lines.append(f"Роли: {', '.join(user_roles)}")
                                 if message_text:
                                     lines.append("")
                                     lines.append(str(message_text))
