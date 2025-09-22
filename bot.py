@@ -13,6 +13,16 @@ from services.repositories import UserRepo, GroupRepo, RoleRepo, NotificationRep
 from config import BOT_TOKEN, SUPERADMIN_ID
 
 
+def is_superadmin(telegram_id: int) -> bool:
+    """Check if user is superadmin (supports multiple superadmin IDs)."""
+    try:
+        from config import SUPERADMIN_IDS
+        return telegram_id in SUPERADMIN_IDS
+    except Exception:
+        # Fallback to old method for backward compatibility
+        return telegram_id == SUPERADMIN_ID
+
+
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -594,7 +604,7 @@ def format_event_time_display(time_str: str) -> str:
 
 def can_edit_event_notifications(user_id: int, event_id: int) -> bool:
     """Owner/admin/superadmin only (responsible no longer allowed)."""
-    if user_id == SUPERADMIN_ID:
+    if is_superadmin(user_id):
         return True
     ev = EventRepo.get_by_id(event_id)
     if not ev:
@@ -672,7 +682,7 @@ async def start(message: types.Message):
 
     # Сформировать корневое меню (единое сообщение)
     # For superadmin, show all groups; otherwise only user groups
-    if message.from_user.id == SUPERADMIN_ID:
+    if is_superadmin(message.from_user.id):
         try:
             groups_all = GroupRepo.list_all()
             # Normalize to (gid, title, role, chat_id) where role may be None
@@ -684,14 +694,14 @@ async def start(message: types.Message):
     from aiogram.utils.keyboard import InlineKeyboardBuilder
     kb = InlineKeyboardBuilder()
     lines = []
-    if user.id == SUPERADMIN_ID:
+    if is_superadmin(user.id):
         lines.append(f"Роль: {ROLE_RU['superadmin']}")
     if not groups:
         lines.append("У вас пока нет групп. Добавьте бота в группу или дождитесь подтверждения доступа.")
     else:
         lines.append("Ваши группы:")
         for gid, title, role, chat_id in groups:
-            if message.from_user.id == SUPERADMIN_ID:
+            if is_superadmin(message.from_user.id):
                 role_label = ROLE_RU.get(role, 'Отсутствует') if role else 'Отсутствует'
             else:
                 role_label = ROLE_RU.get(role or 'member', role or 'member')
@@ -783,7 +793,7 @@ async def cb_group_events(callback: types.CallbackQuery):
     # Кнопки действий (создание) и назад
     # Hide "+ Создать" for plain members
     role = RoleRepo.get_user_role(internal_user_id, gid) if internal_user_id is not None else None
-    if role in ("owner", "admin") or callback.from_user.id == SUPERADMIN_ID:
+    if role in ("owner", "admin") or is_superadmin(callback.from_user.id):
         kb.row(types.InlineKeyboardButton(text="+ Создать", callback_data=f"evt_create:{gid}"))
     kb.row(types.InlineKeyboardButton(text="⬅️ Назад", callback_data=f"grp_menu:{gid}"))
     await set_menu_message(callback.from_user.id, callback.message.chat.id, "\n".join(lines), kb.as_markup())
@@ -820,7 +830,7 @@ async def cb_event_open(callback: types.CallbackQuery):
         
         # Role-based controls
         role = RoleRepo.get_user_role(internal_user_id, gid_i) if internal_user_id is not None else None
-        if role in ("owner", "admin") or callback.from_user.id == SUPERADMIN_ID:
+        if role in ("owner", "admin") or is_superadmin(callback.from_user.id):
             kb.row(
                 types.InlineKeyboardButton(text="✏️ Переименовать", callback_data=f"evt_rename:{eid_i}:{gid_i}"),
                 types.InlineKeyboardButton(text="🕒 Изм. дату/время", callback_data=f"evt_retime:{eid_i}:{gid_i}")
@@ -829,7 +839,7 @@ async def cb_event_open(callback: types.CallbackQuery):
                 types.InlineKeyboardButton(text="🗑 Удалить", callback_data=f"evt_delete:{eid_i}:{gid_i}")
             )
         # Кнопка отправки оповещения (как групповое сообщение с ролями)
-        if (role in ("owner", "admin")) or (callback.from_user.id == SUPERADMIN_ID):
+        if (role in ("owner", "admin")) or is_superadmin(callback.from_user.id):
             kb.row(types.InlineKeyboardButton(text="📣 Отправить оповещение", callback_data=f"evt_notify_now:{eid_i}:{gid_i}"))
         
         # Build role buttons (assign/unassign) + refresh
@@ -947,7 +957,7 @@ async def cb_event_unassign(callback: types.CallbackQuery):
         internal_user_id = urow[0] if urow else None
         role = RoleRepo.get_user_role(internal_user_id, gid_i) if internal_user_id is not None else None
         # Admin controls
-        if role in ("owner", "admin") or callback.from_user.id == SUPERADMIN_ID:
+        if role in ("owner", "admin") or is_superadmin(callback.from_user.id):
             kb.row(
                 types.InlineKeyboardButton(text="✏️ Переименовать", callback_data=f"evt_rename:{eid_i}:{gid_i}"),
                 types.InlineKeyboardButton(text="🕒 Изм. дату/время", callback_data=f"evt_retime:{eid_i}:{gid_i}")
@@ -959,7 +969,7 @@ async def cb_event_unassign(callback: types.CallbackQuery):
         if not resp_uid:
             kb.row(types.InlineKeyboardButton(text="Забронировать", callback_data=f"evt_book_toggle:{eid_i}:{gid_i}"))
         else:
-            if internal_user_id is not None and (internal_user_id == resp_uid or role in ("owner", "admin") or callback.from_user.id == SUPERADMIN_ID):
+            if internal_user_id is not None and (internal_user_id == resp_uid or role in ("owner", "admin") or is_superadmin(callback.from_user.id)):
                 kb.row(types.InlineKeyboardButton(text="❌ Убрать ответственного", callback_data=f"evt_unassign:{eid_i}:{gid_i}"))
         # Notifications UI removed globally
         kb.row(types.InlineKeyboardButton(text="⬅️ Назад", callback_data=f"grp_events:{gid_i}"))
@@ -1277,7 +1287,7 @@ async def cb_group_remind_period(callback: types.CallbackQuery):
     urow = UserRepo.get_by_telegram_id(callback.from_user.id)
     internal_user_id = urow[0] if urow else None
     role = RoleRepo.get_user_role(internal_user_id, gid_i) if internal_user_id is not None else None
-    if not (callback.from_user.id == SUPERADMIN_ID or role in ("owner", "admin")):
+    if not (is_superadmin(callback.from_user.id) or role in ("owner", "admin")):
         await callback.message.answer("Недостаточно прав")
         return
     # Compute range
@@ -1504,7 +1514,7 @@ async def refresh_role_keyboard(message: types.Message, gid: int, eid: int, invo
     # If private and admin/owner/superadmin, prepend admin controls
     if is_private:
         try:
-            if (role in ("owner", "admin")) or (invoker_tid == SUPERADMIN_ID):
+            if (role in ("owner", "admin")) or is_superadmin(invoker_tid):
                 kb.row(
                     types.InlineKeyboardButton(text="✏️ Переименовать", callback_data=f"evt_rename:{eid}:{gid}"),
                     types.InlineKeyboardButton(text="🕒 Изм. дату/время", callback_data=f"evt_retime:{eid}:{gid}")
@@ -1542,7 +1552,7 @@ async def cb_evt_notify_now(callback: types.CallbackQuery):
     urow = UserRepo.get_by_telegram_id(callback.from_user.id)
     internal_user_id = urow[0] if urow else None
     role = RoleRepo.get_user_role(internal_user_id, gid_i) if internal_user_id is not None else None
-    if not (callback.from_user.id == SUPERADMIN_ID or (role in ("owner", "admin"))):
+    if not (is_superadmin(callback.from_user.id) or (role in ("owner", "admin"))):
         await callback.answer("Недостаточно прав", show_alert=False)
         return
     ev = EventRepo.get_by_id(eid_i)
@@ -1914,7 +1924,7 @@ async def on_freeform_input(message: types.Message):
                 internal_user_id2 = urow2[0] if urow2 else None
                 role2 = RoleRepo.get_user_role(internal_user_id2, group_id) if internal_user_id2 is not None else None
                 # Admin controls
-                if role2 in ("owner", "admin") or message.from_user.id == SUPERADMIN_ID:
+                if role2 in ("owner", "admin") or is_superadmin(message.from_user.id):
                     kb.row(
                         types.InlineKeyboardButton(text="✏️ Переименовать", callback_data=f"evt_rename:{_id}:{group_id}"),
                         types.InlineKeyboardButton(text="🕒 Изм. дату/время", callback_data=f"evt_retime:{_id}:{group_id}")
@@ -1928,7 +1938,7 @@ async def on_freeform_input(message: types.Message):
                 if not resp_uid:
                     kb.row(types.InlineKeyboardButton(text="Забронировать", callback_data=f"evt_book_toggle:{_id}:{group_id}"))
                 else:
-                    if internal_user_id2 is not None and (internal_user_id2 == resp_uid or role2 in ("owner", "admin") or message.from_user.id == SUPERADMIN_ID):
+                    if internal_user_id2 is not None and (internal_user_id2 == resp_uid or role2 in ("owner", "admin") or is_superadmin(message.from_user.id)):
                         kb.row(types.InlineKeyboardButton(text="❌ Убрать ответственного", callback_data=f"evt_unassign:{_id}:{group_id}"))
                 # Group notifications for admins
                 # Notifications UI removed globally
@@ -2074,7 +2084,7 @@ async def on_freeform_input(message: types.Message):
                 internal_user_id2 = urow2[0] if urow2 else None
                 role2 = RoleRepo.get_user_role(internal_user_id2, gid) if internal_user_id2 is not None else None
                 # Admin controls
-                if role2 in ("owner", "admin") or message.from_user.id == SUPERADMIN_ID:
+                if role2 in ("owner", "admin") or is_superadmin(message.from_user.id):
                     kb.row(
                         types.InlineKeyboardButton(text="✏️ Переименовать", callback_data=f"evt_rename:{eid}:{gid}"),
                         types.InlineKeyboardButton(text="🕒 Изм. дату/время", callback_data=f"evt_retime:{eid}:{gid}")
@@ -2164,7 +2174,7 @@ async def on_freeform_input(message: types.Message):
                 urow2 = UserRepo.get_by_telegram_id(message.from_user.id)
                 internal_user_id2 = urow2[0] if urow2 else None
                 role2 = RoleRepo.get_user_role(internal_user_id2, gid) if internal_user_id2 is not None else None
-                if role2 in ("owner", "admin") or message.from_user.id == SUPERADMIN_ID:
+                if role2 in ("owner", "admin") or is_superadmin(message.from_user.id):
                     kb.row(
                         types.InlineKeyboardButton(text="✏️ Переименовать", callback_data=f"evt_rename:{eid}:{gid}"),
                         types.InlineKeyboardButton(text="🕒 Изм. дату/время", callback_data=f"evt_retime:{eid}:{gid}")

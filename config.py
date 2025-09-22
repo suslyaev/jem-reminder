@@ -27,7 +27,19 @@ def load_config():
 try:
     CONFIG = load_config()
     BOT_TOKEN = CONFIG['BOT_TOKEN']
-    SUPERADMIN_ID = int(CONFIG['SUPERADMIN_ID'])
+    
+    # Поддержка как одного ID, так и массива ID суперадминов
+    superadmin_str = CONFIG['SUPERADMIN_ID']
+    if ',' in superadmin_str:
+        # Массив ID через запятую
+        SUPERADMIN_IDS = [int(x.strip()) for x in superadmin_str.split(',') if x.strip()]
+    else:
+        # Один ID
+        SUPERADMIN_IDS = [int(superadmin_str)]
+    
+    # Для обратной совместимости оставляем SUPERADMIN_ID как первый элемент
+    SUPERADMIN_ID = SUPERADMIN_IDS[0] if SUPERADMIN_IDS else None
+    
 except Exception as e:
     print(f"Ошибка загрузки конфигурации: {e}")
     print("Убедитесь, что файл .env существует и содержит необходимые параметры")
