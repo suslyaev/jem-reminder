@@ -33,6 +33,15 @@ SUPERADMIN_ID = os.getenv('SUPERADMIN_ID')
 if SUPERADMIN_ID:
     SUPERADMIN_ID = int(SUPERADMIN_ID)
 
+def is_superadmin(telegram_id: int) -> bool:
+    """Check if user is superadmin (supports multiple superadmin IDs)."""
+    try:
+        from config import SUPERADMIN_IDS
+        return telegram_id in SUPERADMIN_IDS
+    except Exception:
+        # Fallback to old method for backward compatibility
+        return telegram_id == SUPERADMIN_ID
+
 BASE_DIR = Path(__file__).resolve().parents[1]
 TEMPLATES_DIR = BASE_DIR / 'web' / 'templates'
 STATIC_DIR = BASE_DIR / 'web' / 'static'
@@ -124,15 +133,11 @@ def _require_user(request: Request):
 def _require_admin(user_id: int, group_id: int):
     # Allow by group role OR by global superadmin telegram id
     role = RoleRepo.get_user_role(user_id, group_id)
-    try:
-        from config import SUPERADMIN_ID as CFG_SA
-    except Exception:
-        CFG_SA = None
     if role in ("owner", "admin", "superadmin"):
         return role
     # Check telegram id
     u = UserRepo.get_by_id(user_id)
-    if u and CFG_SA and u[1] == CFG_SA:
+    if u and is_superadmin(u[1]):
         return "superadmin"
     raise HTTPException(status_code=403, detail="Admin permissions required")
 
@@ -359,7 +364,7 @@ async def index(request: Request):
             if first_name and last_name:
                 display = f"{first_name} {last_name}"
             # If superadmin, show all groups; else only groups with roles
-            is_super = (user_row[1] == SUPERADMIN_ID) if SUPERADMIN_ID else False
+            is_super = is_superadmin(user_row[1])
             if is_super:
                 groups_all = GroupRepo.list_all()
                 # Show actual role in group for superadmin (may be None if not a member)
@@ -517,7 +522,7 @@ async def index(request: Request):
             if first_name and last_name:
                 display = f"{first_name} {last_name}"
             # If superadmin, show all groups; else only groups with roles
-            is_super = (user_row[1] == SUPERADMIN_ID) if SUPERADMIN_ID else False
+            is_super = is_superadmin(user_row[1])
             if is_super:
                 groups_all = GroupRepo.list_all()
                 groups = [(gid, title, RoleRepo.get_user_role(user_id, gid), chat_id) for (gid, title, chat_id) in groups_all]
@@ -648,7 +653,7 @@ async def group_view(request: Request, gid: int, tab: str = None, page: int = 1,
         from config import SUPERADMIN_ID as CFG_SA
     except Exception:
         CFG_SA = None
-    is_superadmin_req = (urow[1] == CFG_SA) if CFG_SA else False
+    is_superadmin_req = is_superadmin(urow[1])
     if role is None and not is_superadmin_req:
         events = EventRepo.list_by_group(gid)
         has_any = False
@@ -677,7 +682,7 @@ async def group_view(request: Request, gid: int, tab: str = None, page: int = 1,
     
     # Filter out superadmin if current user is not superadmin
     from config import SUPERADMIN_ID
-    is_superadmin = urow[1] == SUPERADMIN_ID  # urow[1] is telegram_id
+    is_superadmin = is_superadmin(urow[1])  # urow[1] is telegram_id
     if not is_superadmin:
         # Remove superadmin from member options
         filtered_member_rows = []
@@ -1139,11 +1144,7 @@ async def group_settings(request: Request, gid: int):
     user_id = urow[0]
     # Allow all users to see settings; restrict admin functions by role / global superadmin
     role = RoleRepo.get_user_role(user_id, gid)
-    try:
-        from config import SUPERADMIN_ID as CFG_SA
-    except Exception:
-        CFG_SA = None
-    is_super = (urow[1] == CFG_SA) if CFG_SA else False
+    is_super = is_superadmin(urow[1])
     group = GroupRepo.get_by_id(gid)
     notifications = NotificationRepo.list_notifications(gid) if (role in ['admin', 'owner', 'superadmin'] or is_super) else []
     # Load group role templates
@@ -1402,7 +1403,7 @@ async def delete_group_notification(request: Request, gid: int, nid: int, tab: s
 async def admin_block_user(request: Request, uid: int, blocked: int = Form(...)):
     urow = _require_user(request)
     # Only superadmin can block users
-    if urow[1] != SUPERADMIN_ID:
+    if not is_superadmin(urow[1]):
         raise HTTPException(status_code=403, detail="Only superadmin")
     try:
         UserRepo.set_blocked(uid, bool(int(blocked) == 0))  # toggle based on sent value
@@ -1431,7 +1432,7 @@ async def admin_block_user(request: Request, uid: int, blocked: int = Form(...))
 async def admin_delete_user(request: Request, uid: int):
     urow = _require_user(request)
     # Only superadmin can delete users
-    if urow[1] != SUPERADMIN_ID:
+    if not is_superadmin(urow[1]):
         raise HTTPException(status_code=403, detail="Only superadmin")
     try:
         UserRepo.delete_user(uid)
@@ -1459,7 +1460,7 @@ async def admin_delete_user(request: Request, uid: int):
 async def admin_send_message(request: Request, recipient_id: int = Form(...), message: str = Form(...)):
     urow = _require_user(request)
     # Only superadmin can send arbitrary messages here
-    if urow[1] != SUPERADMIN_ID:
+    if not is_superadmin(urow[1]):
         raise HTTPException(status_code=403, detail="Only superadmin")
     # Resolve recipient telegram_id
     tid = UserRepo.get_telegram_id_by_user_id(recipient_id)
@@ -1481,11 +1482,7 @@ async def event_settings(request: Request, gid: int, eid: int):
     # Check if user has access (admin or participant with booking)
     role = RoleRepo.get_user_role(user_id, gid)
     # Global superadmin bypass
-    try:
-        from config import SUPERADMIN_ID as CFG_SA
-    except Exception:
-        CFG_SA = None
-    is_super = (urow[1] == CFG_SA) if CFG_SA else False
+    is_super = is_superadmin(urow[1])
     # Allow: admins/owner/superadmin OR any group member OR anyone who has a booking on this event
     if (role is None and not BookingRepo.has_booking(user_id, eid)) and not is_super:
         raise HTTPException(status_code=403, detail="Access denied")
@@ -1562,7 +1559,7 @@ async def event_settings(request: Request, gid: int, eid: int):
     
     # Filter out superadmin if current user is not superadmin
     from config import SUPERADMIN_ID
-    is_superadmin = urow[1] == SUPERADMIN_ID  # urow[1] is telegram_id
+    is_superadmin = is_superadmin(urow[1])  # urow[1] is telegram_id
     if not is_superadmin:
         # Remove superadmin from member options
         filtered_member_rows = []
@@ -1771,7 +1768,7 @@ async def group_audit(request: Request, gid: int):
     # Allow owners/admins and global superadmin
     is_allowed = role in ['owner', 'admin', 'superadmin'] if role else False
     try:
-        is_super = (urow[1] == SUPERADMIN_ID) if SUPERADMIN_ID else False
+        is_super = is_superadmin(urow[1])
         if is_super:
             is_allowed = True
     except Exception:
@@ -1875,11 +1872,7 @@ async def delete_pending_invite(request: Request, gid: int, pid: int):
     user_id = urow[0]
     # Allow owner/admin/superadmin or global superadmin
     role = RoleRepo.get_user_role(user_id, gid)
-    try:
-        from config import SUPERADMIN_ID as CFG_SA
-    except Exception:
-        CFG_SA = None
-    is_super = (urow[1] == CFG_SA) if CFG_SA else False
+    is_super = is_superadmin(urow[1])
     if role not in ['owner', 'admin', 'superadmin'] and not is_super:
         raise HTTPException(status_code=403, detail="Access denied")
     ok = 'pending_deleted'
@@ -2004,7 +1997,7 @@ async def group_analytics(request: Request, gid: int, start: str | None = None, 
         from config import SUPERADMIN_ID as CFG_SA
     except Exception:
         CFG_SA = None
-    is_superadmin_req = (urow[1] == CFG_SA) if CFG_SA else False
+    is_superadmin_req = is_superadmin(urow[1])
     if role is None and not is_superadmin_req:
         events = EventRepo.list_by_group(gid)
         if not any(BookingRepo.has_booking(user_id, eid) for eid, _, _, _ in events):
@@ -2352,7 +2345,7 @@ async def delete_personal_event_notification(request: Request, gid: int, eid: in
     # Allow owner/superadmin to delete any personal notification
     try:
         user_role = RoleRepo.get_user_role(user_id, gid)
-        if user_role in ['owner'] or urow[1] == SUPERADMIN_ID:
+        if user_role in ['owner'] or is_superadmin(urow[1]):
             PersonalEventNotificationRepo.admin_delete_notification(nid)
         else:
             PersonalEventNotificationRepo.delete_notification(nid, user_id)
@@ -2575,7 +2568,7 @@ async def unbook_role(request: Request, gid: int, eid: int, role_name: str, tab:
     role = RoleRepo.get_user_role(user_id, gid)
     is_admin = role in ['admin', 'owner', 'superadmin'] if role else False
     try:
-        is_super = (urow[1] == SUPERADMIN_ID) if SUPERADMIN_ID else False
+        is_super = is_superadmin(urow[1])
         if is_super:
             is_admin = True
     except Exception:
@@ -2655,8 +2648,7 @@ async def update_member_role(request: Request, gid: int, uid: int, new_role: str
     actor_id = urow[0]
     # Only owner or superadmin can change roles
     actor_role = RoleRepo.get_user_role(actor_id, gid)
-    from config import SUPERADMIN_ID
-    is_super = (urow[1] == SUPERADMIN_ID)
+    is_super = is_superadmin(urow[1])
     if actor_role not in ['owner'] and not is_super:
         raise HTTPException(status_code=403, detail="Only owner or superadmin can change roles")
 
@@ -2702,8 +2694,7 @@ async def remove_member(request: Request, gid: int, uid: int):
     actor_id = urow[0]
     # Only owner or superadmin can remove
     actor_role = RoleRepo.get_user_role(actor_id, gid)
-    from config import SUPERADMIN_ID
-    is_super = (urow[1] == SUPERADMIN_ID)
+    is_super = is_superadmin(urow[1])
     if actor_role not in ['owner'] and not is_super:
         raise HTTPException(status_code=403, detail="Only owner or superadmin can remove members")
 
@@ -2732,8 +2723,7 @@ async def add_group_member(request: Request, gid: int, identifier_type: str = Fo
     user_id = urow[0]
     # Owners, admins, or superadmins can add members
     role = RoleRepo.get_user_role(user_id, gid)
-    from config import SUPERADMIN_ID
-    is_super = (urow[1] == SUPERADMIN_ID)
+    is_super = is_superadmin(urow[1])
     if role not in ['owner', 'admin'] and not is_super:
         raise HTTPException(status_code=403, detail="Only owner, admin or superadmin can add members")
 
@@ -2819,7 +2809,7 @@ async def delete_group(request: Request, gid: int):
         from config import SUPERADMIN_ID as CFG_SA
     except Exception:
         CFG_SA = None
-    is_global_superadmin = (urow[1] == CFG_SA) if CFG_SA else False  # urow[1] is telegram_id
+    is_global_superadmin = is_superadmin(urow[1])  # urow[1] is telegram_id
     if role != 'owner' and not is_global_superadmin:
         raise HTTPException(status_code=403, detail="Only group owner or superadmin can delete group")
     
