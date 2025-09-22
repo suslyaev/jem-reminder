@@ -2096,7 +2096,9 @@ async def update_event_roles(request: Request, gid: int, eid: int, allow_multi_r
     urow = _require_user(request)
     user_id = urow[0]
     role = RoleRepo.get_user_role(user_id, gid)
-    if role not in ['admin', 'owner', 'superadmin']:
+    # Allow global superadmin even if not in group
+    is_super = is_superadmin(urow[1])
+    if (role not in ['admin', 'owner', 'superadmin']) and not is_super:
         raise HTTPException(status_code=403, detail="Access denied")
     # Update event flag
     try:
@@ -2106,30 +2108,29 @@ async def update_event_roles(request: Request, gid: int, eid: int, allow_multi_r
             conn.commit()
     except Exception:
         pass
-    # Replace roles if provided
-    if role_names is not None:
-        names = [n.strip() for n in role_names if n and n.strip()]
+    # Replace roles; if role_names is missing -> clear all
+    names = [n.strip() for n in (role_names or []) if n and n.strip()]
+    try:
+        # Read old roles for audit diff
         try:
-            # Read old roles for audit diff
-            try:
-                old_roles = [r for r, _ in EventRoleRequirementRepo.list_for_event(eid)]
-            except Exception:
-                old_roles = []
-            EventRoleRequirementRepo.replace_for_event(eid, names)
-            # Audit additions/removals
-            try:
-                old_set = set(old_roles)
-                new_set = set(names)
-                added = sorted(list(new_set - old_set))
-                removed = sorted(list(old_set - new_set))
-                for r in added:
-                    AuditLogRepo.add('role_requirement_added', user_id=user_id, group_id=gid, event_id=eid, new_value=r)
-                for r in removed:
-                    AuditLogRepo.add('role_requirement_removed', user_id=user_id, group_id=gid, event_id=eid, old_value=r)
-            except Exception:
-                pass
+            old_roles = [r for r, _ in EventRoleRequirementRepo.list_for_event(eid)]
+        except Exception:
+            old_roles = []
+        EventRoleRequirementRepo.replace_for_event(eid, names)
+        # Audit additions/removals
+        try:
+            old_set = set(old_roles)
+            new_set = set(names)
+            added = sorted(list(new_set - old_set))
+            removed = sorted(list(old_set - new_set))
+            for r in added:
+                AuditLogRepo.add('role_requirement_added', user_id=user_id, group_id=gid, event_id=eid, new_value=r)
+            for r in removed:
+                AuditLogRepo.add('role_requirement_removed', user_id=user_id, group_id=gid, event_id=eid, old_value=r)
         except Exception:
             pass
+    except Exception:
+        pass
     return RedirectResponse(f"/group/{gid}/events/{eid}/settings?ok=updated", status_code=303)
 @app.post('/admin/audit/{aid}/delete')
 async def admin_audit_delete(request: Request, aid: int):
