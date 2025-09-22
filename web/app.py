@@ -2031,7 +2031,8 @@ async def group_analytics(request: Request, gid: int, start: str | None = None, 
     from collections import Counter
     total_by_day = Counter()
     responsible_set = set()
-    roles_counter = Counter()
+    user_bookings_counter = Counter()  # Счетчик бронирований по пользователям
+    free_roles_counter = Counter()      # Счетчик свободных ролей
     for eid, name, time_str, resp_uid in events:
         try:
             try:
@@ -2054,20 +2055,41 @@ async def group_analytics(request: Request, gid: int, start: str | None = None, 
         if resp_uid:
             responsible_set.add(resp_uid)
         try:
-            role_reqs = EventRoleRequirementRepo.list_for_event(eid)
-            for rname, req in role_reqs:
-                roles_counter[rname] += int(req or 0)
+            # Получаем статистику по фактическим бронированиям ролей
+            from services.repositories import EventRoleAssignmentRepo, EventRoleRequirementRepo
+            role_assignments = EventRoleAssignmentRepo.list_for_event(eid)
+            role_requirements = EventRoleRequirementRepo.list_for_event(eid)
+            
+            # Считаем бронирования по пользователям
+            for role_name, user_id in role_assignments:
+                # Получаем имя пользователя
+                user_row = UserRepo.get_by_id(user_id)
+                if user_row:
+                    display_name = DisplayNameRepo.get_display_name(gid, user_id)
+                    user_name = display_name if display_name else (f"@{user_row[2]}" if user_row[2] else str(user_id))
+                    user_bookings_counter[user_name] += 1
+            
+            # Считаем свободные роли
+            assigned_roles = {role_name for role_name, _ in role_assignments}
+            for role_name, required_count in role_requirements:
+                assigned_count = sum(1 for rname, _ in role_assignments if rname == role_name)
+                free_count = max(0, int(required_count or 0) - assigned_count)
+                if free_count > 0:
+                    free_roles_counter[role_name] += free_count
         except Exception:
             pass
 
     daily = sorted(total_by_day.items())
-    roles = sorted(roles_counter.items(), key=lambda x: (-x[1], x[0]))
+    user_bookings = sorted(user_bookings_counter.items(), key=lambda x: (-x[1], x[0]))
+    free_roles = sorted(free_roles_counter.items(), key=lambda x: (-x[1], x[0]))
     stats = {
         'events_total': sum(total_by_day.values()),
         'unique_responsibles': len(responsible_set),
+        'total_bookings': sum(user_bookings_counter.values()),
+        'total_free_roles': sum(free_roles_counter.values()),
     }
 
-    return render('group_analytics.html', group=group, members=members, daily=daily, roles=roles, stats=stats, request=request, gid=gid, start=start or '', end=end or '', user=user or 0)
+    return render('group_analytics.html', group=group, members=members, daily=daily, user_bookings=user_bookings, free_roles=free_roles, stats=stats, request=request, gid=gid, start=start or '', end=end or '', user=user or 0)
 
 @app.post('/group/{gid}/events/{eid}/roles/update')
 async def update_event_roles(request: Request, gid: int, eid: int, allow_multi_roles_per_user: int = Form(0), role_names: List[str] = Form(None)):

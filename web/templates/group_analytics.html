@@ -7,7 +7,9 @@
     <style>
       .card { padding: 12px; border-radius: 12px; background: var(--card); margin-bottom: 12px; }
       .grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
-      @media (min-width: 900px) { .grid { grid-template-columns: 1fr 1fr; } }
+      .grid-top { display: grid; grid-template-columns: 1fr; gap: 12px; }
+      .grid-bottom { display: grid; grid-template-columns: 1fr; gap: 12px; }
+      @media (min-width: 600px) { .grid-bottom { grid-template-columns: 1fr 1fr; } }
       .filters { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
       .filters input, .filters select { padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); }
       .stat { font-size: 14px; color: var(--muted); }
@@ -38,16 +40,24 @@
         </div>
       </form>
 
-      <div class="grid">
+      <div class="grid-top">
         <div class="card">
           <h3>Мероприятий по дням</h3>
           <canvas id="eventsByDay" class="chart-box"></canvas>
           <div class="stat">Всего: {{ stats.events_total }}</div>
         </div>
+      </div>
+      
+      <div class="grid-bottom">
         <div class="card">
-          <h3>Ответственные за период</h3>
-          <div class="stat">Уникальных ответственных: {{ stats.unique_responsibles }}</div>
-          <canvas id="rolesChart" class="chart-box"></canvas>
+          <h3>Бронирования пользователей</h3>
+          <div class="stat">Всего бронирований: {{ stats.total_bookings }}</div>
+          <canvas id="userBookingsChart" class="chart-box"></canvas>
+        </div>
+        <div class="card">
+          <h3>Свободные роли</h3>
+          <div class="stat">Всего свободных ролей: {{ stats.total_free_roles }}</div>
+          <canvas id="freeRolesChart" class="chart-box"></canvas>
         </div>
       </div>
     </div>
@@ -55,7 +65,8 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script>
       const daily = {{ daily | tojson }}; // [["YYYY-MM-DD", count], ...]
-      const roles = {{ roles | tojson }}; // [[role, total_required], ...]
+      const userBookings = {{ user_bookings | tojson }}; // [[user_name, booking_count], ...]
+      const freeRoles = {{ free_roles | tojson }}; // [[role_name, free_count], ...]
 
       function lineChart(ctx, labels, data) {
         return new Chart(ctx, {
@@ -95,13 +106,17 @@
 
       const days = daily.map(d => d[0]);
       const counts = daily.map(d => d[1]);
-      const rLabels = roles.map(r => r[0]);
-      const rData = roles.map(r => r[1]);
+      const ubLabels = userBookings.map(b => b[0]);
+      const ubData = userBookings.map(b => b[1]);
+      const frLabels = freeRoles.map(r => r[0]);
+      const frData = freeRoles.map(r => r[1]);
 
       const ctx1 = document.getElementById('eventsByDay').getContext('2d');
       lineChart(ctx1, days, counts);
-      const ctx2 = document.getElementById('rolesChart').getContext('2d');
-      pieChart(ctx2, rLabels, rData);
+      const ctx2 = document.getElementById('userBookingsChart').getContext('2d');
+      pieChart(ctx2, ubLabels, ubData);
+      const ctx3 = document.getElementById('freeRolesChart').getContext('2d');
+      pieChart(ctx3, frLabels, frData);
     </script>
   </body>
 </html>
