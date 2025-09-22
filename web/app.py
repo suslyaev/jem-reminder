@@ -98,7 +98,7 @@ def _markdown_to_html(md_text: str) -> str:
             line = raw.rstrip('\n')
             if line.strip() == '':
                 close_ul()
-                html_lines.append('<br>')
+                # skip adding explicit <br> for cleaner spacing
                 continue
             if line.startswith('### '):
                 close_ul()
