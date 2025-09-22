@@ -30,8 +30,11 @@ if TEST_TELEGRAM_ID:
     TEST_TELEGRAM_ID = int(TEST_TELEGRAM_ID)
 
 SUPERADMIN_ID = os.getenv('SUPERADMIN_ID')
-if SUPERADMIN_ID:
-    SUPERADMIN_ID = int(SUPERADMIN_ID)
+# Backward-compatible: if single value, cast to int; if comma-separated, leave None (use config.SUPERADMIN_IDS via is_superadmin)
+try:
+    SUPERADMIN_ID = int(SUPERADMIN_ID) if (SUPERADMIN_ID and ',' not in SUPERADMIN_ID) else None
+except ValueError:
+    SUPERADMIN_ID = None
 
 def is_superadmin(telegram_id: int) -> bool:
     """Check if user is superadmin (supports multiple superadmin IDs)."""
@@ -682,8 +685,8 @@ async def group_view(request: Request, gid: int, tab: str = None, page: int = 1,
     
     # Filter out superadmin if current user is not superadmin
     from config import SUPERADMIN_ID
-    is_superadmin = is_superadmin(urow[1])  # urow[1] is telegram_id
-    if not is_superadmin:
+    is_superadmin_flag = is_superadmin(urow[1])  # urow[1] is telegram_id
+    if not is_superadmin_flag:
         # Remove superadmin from member options
         filtered_member_rows = []
         for mid, uname in member_rows:
@@ -1159,8 +1162,8 @@ async def group_settings(request: Request, gid: int):
     
     # Filter out superadmin if current user is not superadmin
     # Check if current user is superadmin by telegram_id
-    is_superadmin = is_super
-    if not is_superadmin:
+    is_superadmin_flag2 = is_super
+    if not is_superadmin_flag2:
         members = [m for m in members if m[6] != 'superadmin']
     
     # Get display names for all members, create if not exists
