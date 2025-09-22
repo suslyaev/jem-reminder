@@ -1501,7 +1501,7 @@ async def event_settings(request: Request, gid: int, eid: int):
         CFG_SUPER = None
     try:
         user_role = RoleRepo.get_user_role(user_id, gid)
-        is_superadmin = (urow[1] == CFG_SUPER) if CFG_SUPER else False
+        is_superadmin_flag = (urow[1] == CFG_SUPER) if CFG_SUPER else False
         def _label_for(uid: int) -> tuple[str, int | None]:
             dn = DisplayNameRepo.get_display_name(gid, uid)
             tg_id = None
@@ -1515,7 +1515,7 @@ async def event_settings(request: Request, gid: int, eid: int):
                 if u[2]:
                     return f"@{u[2]}", tg_id
             return str(uid), tg_id
-        if user_role in ['owner'] or is_superadmin:
+        if user_role in ['owner'] or is_superadmin_flag:
             # Include recipient id and label so template shows correct destination
             personal_rows = PersonalEventNotificationRepo.list_all_for_event(eid)
             personal_notifications = []
@@ -1538,8 +1538,8 @@ async def event_settings(request: Request, gid: int, eid: int):
     # For admins/superadmin, compute per user; for regular user, compute for self only
     personal_notifications_sent_map = {}
     try:
-        is_superadmin = (urow[1] == CFG_SUPER) if CFG_SUPER else False
-        if user_role in ['owner'] or is_superadmin:
+        is_superadmin_flag = (urow[1] == CFG_SUPER) if CFG_SUPER else False
+        if user_role in ['owner'] or is_superadmin_flag:
             # Load all personal notifications with user_id to compute sent per row
             all_personals = PersonalEventNotificationRepo.list_all_for_event(eid)
             for nid, uid, tb, tu, msg in all_personals:
@@ -1562,8 +1562,8 @@ async def event_settings(request: Request, gid: int, eid: int):
     
     # Filter out superadmin if current user is not superadmin
     from config import SUPERADMIN_ID
-    is_superadmin = is_superadmin(urow[1])  # urow[1] is telegram_id
-    if not is_superadmin:
+    is_superadmin_viewer = is_superadmin(urow[1])  # urow[1] is telegram_id
+    if not is_superadmin_viewer:
         # Remove superadmin from member options
         filtered_member_rows = []
         for mid, uname in member_rows:
