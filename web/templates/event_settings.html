@@ -221,7 +221,9 @@
           }
           function formatRu(dt) {
             const pad = n => (n < 10 ? '0'+n : ''+n);
-            return `${pad(dt.getDate())}.${pad(dt.getMonth()+1)}.${dt.getFullYear()} ${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+            const weekdays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+            const weekday = weekdays[dt.getDay() === 0 ? 6 : dt.getDay() - 1]; // Convert Sunday=0 to Sunday=6
+            return `${pad(dt.getDate())}.${pad(dt.getMonth()+1)}.${dt.getFullYear()} ${pad(dt.getHours())}:${pad(dt.getMinutes())} (${weekday})`;
           }
           function getCtx() {
             const inUpdate = !!document.getElementById('tpl-update-form');
@@ -388,7 +390,7 @@
                     {% if is_sent %} ✓{% endif %}
                   </div>
                   <div class="subtitle" style="font-size: 0.8em; color: #9ca3af; margin-top: 4px;">
-                    Когда: {{ _calculate_notification_time(event[2], time_before, time_unit) }}
+                    Когда: {{ _calculate_notification_time(event[2], time_before, time_unit) | format_time_with_weekday }}
                   </div>
                   <div class="subtitle" style="font-size: 0.8em; color: #9ca3af; margin-top: 2px;">
                     Куда: Группа (ID: {{ group[1] }})
@@ -458,7 +460,7 @@
                   {% if is_sent %} ✓{% endif %}
                 </div>
                 <div class="subtitle" style="font-size: 0.8em; color: #9ca3af; margin-top: 4px;">
-                  Когда: {{ _calculate_notification_time(event[2], time_before, time_unit) }}
+                  Когда: {{ _calculate_notification_time(event[2], time_before, time_unit) | format_time_with_weekday }}
                 </div>
                 <div class="subtitle" style="font-size: 0.8em; color: #9ca3af; margin-top: 2px;">
                   Куда: {{ pn_label }} (TG: {{ pn_tgid if pn_tgid else '—' }})

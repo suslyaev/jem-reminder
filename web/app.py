@@ -193,6 +193,25 @@ def _format_time_display(time_str: str) -> tuple[str, str]:
             continue
     return display_val, input_val
 
+def _format_time_with_weekday(time_str: str) -> str:
+    """Format time string with weekday abbreviation in parentheses."""
+    try:
+        # Try different formats
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%d.%m.%Y %H:%M:%S", "%d.%m.%Y %H:%M"):
+            try:
+                dt = datetime.strptime(time_str, fmt)
+                weekday_abbr = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'][dt.weekday()]
+                return f"{dt.strftime('%d.%m.%Y %H:%M')} ({weekday_abbr})"
+            except ValueError:
+                continue
+        # Fallback to original format
+        return time_str
+    except Exception:
+        return time_str
+
+# Add filter after function definition
+env.filters['format_time_with_weekday'] = _format_time_with_weekday
+
 def _calculate_notification_time(event_time_str: str, time_before: int, time_unit: str) -> str:
     """Calculate when notification will be sent based on event time and notification settings."""
     try:
@@ -771,7 +790,7 @@ async def group_view(request: Request, gid: int, tab: str = None, page: int = 1,
         event_data = {
             'id': eid,
             'name': name,
-            'time_display': disp,
+            'time_display': _format_time_with_weekday(time_str),
             'time_input': input_val,
             'responsible_user_id': resp_uid,
             'responsible_name': member_name_map.get(resp_uid) if resp_uid is not None else None,
