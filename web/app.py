@@ -1,4 +1,6 @@
 from fastapi import FastAPI, Request, HTTPException, Form
+from fastapi.responses import HTMLResponse
+from fastapi.exceptions import RequestValidationError
 from typing import List
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -56,6 +58,10 @@ app.add_middleware(SessionMiddleware, secret_key="your-secret-key-change-in-prod
 
 app.mount('/static', StaticFiles(directory=STATIC_DIR.as_posix()), name='static')
 
+# Add 404 handler
+@app.exception_handler(404)
+async def not_found_handler(request: Request, exc: HTTPException):
+    return render('404.html')
 
 def render(name: str, **ctx) -> HTMLResponse:
     tpl = env.get_template(name)
@@ -1036,6 +1042,62 @@ async def update_event_from_card(request: Request, gid: int, eid: int, name: str
         
         # Update personal notifications
         PersonalEventNotificationRepo.update_user_for_event(eid, old_responsible, new_responsible, gid)
+    
+    # Process role assignments
+    form_data = await request.form()
+    for field_name, field_value in form_data.items():
+        if field_name.startswith('role_') and field_name.endswith('_user_id') and field_value:
+            try:
+                role_name = field_name[5:-8]  # Remove 'role_' prefix and '_user_id' suffix
+                target_user_id = int(field_value)
+                
+                # Check if role exists for this event
+                reqs = {r: req for r, req in EventRoleRequirementRepo.list_for_event(eid)}
+                if role_name not in reqs:
+                    continue
+                
+                # Check if role already assigned
+                assigned = {r: uid for r, uid in EventRoleAssignmentRepo.list_for_event(eid)}
+                if role_name in assigned and assigned[role_name]:
+                    continue
+                
+                # Check allow_multi_roles_per_user
+                allow_multi = 0
+                with get_conn() as conn:
+                    cur = conn.cursor()
+                    cur.execute("SELECT allow_multi_roles_per_user FROM events WHERE id = ?", (eid,))
+                    row = cur.fetchone()
+                    allow_multi = row[0] if row else 0
+                
+                if not allow_multi:
+                    # ensure user has no other role in this event
+                    for r, uid in assigned.items():
+                        if uid == target_user_id:
+                            continue
+                
+                # Assign role
+                if EventRoleAssignmentRepo.assign(eid, role_name, target_user_id):
+                    # Create personal notifications from group personal templates
+                    try:
+                        PersonalEventNotificationRepo.create_from_personal_templates(eid, gid, target_user_id)
+                    except Exception:
+                        pass
+                    
+                    # Record booking for analytics
+                    try:
+                        from services.repositories import BookingRepo
+                        BookingRepo.add_booking(target_user_id, eid)
+                    except Exception:
+                        pass
+                    
+                    # Audit: role booked
+                    try:
+                        AuditLogRepo.add('role_booked', user_id=target_user_id, group_id=gid, event_id=eid, new_value=role_name)
+                    except Exception:
+                        pass
+            except (ValueError, Exception):
+                continue
+    
     # Build redirect URL with all parameters
     params = []
     if tab:

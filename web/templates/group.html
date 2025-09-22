@@ -336,7 +336,7 @@
                           {% if member_options and member_options|length > 0 %}
                             <div class="autocomplete-container" style="flex: 1; max-width: 220px;">
                               <input class="autocomplete-input" type="text" placeholder="— выбрать —" value="" data-user-id="" autocomplete="off">
-                              <input type="hidden" name="selected_user_id" value="">
+                              <input type="hidden" name="role_{{ rname }}_user_id" value="">
                               <div class="autocomplete-dropdown" style="display: none;">
                                 <div class="autocomplete-option" data-value="">— выбрать —</div>
                                 {% for uid, label in member_options %}
@@ -653,9 +653,7 @@
             (function(){
               function initRoleAutocomplete(container) {
                 const input = container.querySelector('.autocomplete-input');
-                const form = container.closest('form');
-                if (!form) return;
-                const hidden = form.querySelector('input[name="selected_user_id"]');
+                const hidden = container.querySelector('input[type="hidden"]');
                 const dropdown = container.querySelector('.autocomplete-dropdown');
                 if (!input || !hidden || !dropdown) return;
                 const options = dropdown.querySelectorAll('.autocomplete-option');
@@ -1175,7 +1173,7 @@
       function bookRoleFromRow(btn, eventId, roleName) {
         const row = btn.closest('.row');
         const container = row ? row.querySelector('.autocomplete-container') : null;
-        const hidden = container ? container.querySelector('input[name="selected_user_id"]') : null;
+        const hidden = container ? container.querySelector(`input[name="role_${roleName}_user_id"]`) : null;
         const selected = hidden && hidden.value ? hidden.value : '';
         const formData = new FormData();
         formData.append('tab', '{{ active_tab }}');

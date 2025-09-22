@@ -1,0 +1,49 @@
+<!doctype html>
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Страница не найдена - JEM Reminder</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  </head>
+  <body>
+    <div class="container">
+      <h1>JEM Reminder</h1>
+      
+      <div class="error-page">
+        <div class="error-icon">🔍</div>
+        <h2>Страница не найдена</h2>
+        <p class="error-message">
+          К сожалению, запрашиваемая страница не существует или была перемещена.
+        </p>
+        
+        <div class="suggestions">
+          <h3>Возможные причины:</h3>
+          <ul>
+            <li>Ссылка была введена с ошибкой</li>
+            <li>Страница была удалена или перемещена</li>
+            <li>У вас нет доступа к этой странице</li>
+            <li>Событие или группа больше не существует</li>
+          </ul>
+        </div>
+        
+        <div class="actions">
+          <a href="/" class="btn">На главную</a>
+          <a href="javascript:history.back()" class="btn" style="background: var(--muted); margin-left: 8px;">Назад</a>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      (function() {
+        try {
+          if (window.Telegram && Telegram.WebApp) {
+            Telegram.WebApp.ready();
+          }
+        } catch (e) {
+          console.log('TG WebApp init error:', e);
+        }
+      })();
+    </script>
+  </body>
+</html>
