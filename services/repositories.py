@@ -1319,6 +1319,55 @@ class DisplayNameRepo:
             conn.commit()
 
 
+# --- FAQ ---
+class FAQRepo:
+    @staticmethod
+    def list_all() -> List[Tuple[int, str, str]]:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS faq (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    question TEXT NOT NULL,
+                    answer TEXT NOT NULL,
+                    created_at TEXT DEFAULT (datetime('now'))
+                )
+            """)
+            cur.execute("SELECT id, question, answer FROM faq ORDER BY id DESC")
+            return cur.fetchall()
+
+    @staticmethod
+    def add(question: str, answer: str) -> int:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS faq (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    question TEXT NOT NULL,
+                    answer TEXT NOT NULL,
+                    created_at TEXT DEFAULT (datetime('now'))
+                )
+            """)
+            cur.execute("INSERT INTO faq (question, answer) VALUES (?,?)", (question.strip(), answer.strip()))
+            conn.commit()
+            return cur.lastrowid
+
+    @staticmethod
+    def delete(faq_id: int) -> bool:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS faq (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    question TEXT NOT NULL,
+                    answer TEXT NOT NULL,
+                    created_at TEXT DEFAULT (datetime('now'))
+                )
+            """)
+            cur.execute("DELETE FROM faq WHERE id = ?", (faq_id,))
+            conn.commit()
+            return cur.rowcount > 0
+
 # --- Templates & Roles repositories ---
 class EventTemplateRepo:
     @staticmethod

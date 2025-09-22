@@ -17,7 +17,7 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from services.repositories import UserRepo, GroupRepo, EventRepo, RoleRepo, PersonalEventNotificationRepo, NotificationRepo, BookingRepo, DisplayNameRepo, EventNotificationRepo, DispatchLogRepo, EventTemplateRepo, TemplateRoleRequirementRepo, TemplateGenerationRepo, TemplateGenerator, EventRoleRequirementRepo, EventRoleAssignmentRepo, get_conn
-from services.repositories import AuditLogRepo
+from services.repositories import AuditLogRepo, FAQRepo
 
 # Import test configuration from .env
 import os
@@ -78,6 +78,95 @@ async def not_found_handler(request: Request, exc: HTTPException):
 def render(name: str, **ctx) -> HTMLResponse:
     tpl = env.get_template(name)
     return HTMLResponse(tpl.render(**ctx))
+
+def _markdown_to_html(md_text: str) -> str:
+    """Convert Markdown to HTML; prefer python-markdown, fallback to light renderer."""
+    try:
+        import markdown as _md
+        return _md.markdown(md_text or '', extensions=['extra', 'sane_lists'])
+    except Exception:
+        import html as _html, re as _re
+        lines = (md_text or '').splitlines()
+        html_lines = []
+        in_ul = False
+        def close_ul():
+            nonlocal in_ul
+            if in_ul:
+                html_lines.append('</ul>')
+                in_ul = False
+        for raw in lines:
+            line = raw.rstrip('\n')
+            if line.strip() == '':
+                close_ul()
+                html_lines.append('<br>')
+                continue
+            if line.startswith('### '):
+                close_ul()
+                html_lines.append(f"<h3>{_html.escape(line[4:])}</h3>")
+                continue
+            if line.startswith('## '):
+                close_ul()
+                html_lines.append(f"<h2>{_html.escape(line[3:])}</h2>")
+                continue
+            if line.strip().startswith('- '):
+                if not in_ul:
+                    html_lines.append('<ul>')
+                    in_ul = True
+                item = line.strip()[2:]
+                esc = _html.escape(item)
+                esc = _re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", esc)
+                esc = _re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"<em>\1</em>", esc)
+                html_lines.append(f"<li>{esc}</li>")
+                continue
+            if line.strip() == '---':
+                close_ul()
+                html_lines.append('<hr>')
+                continue
+            close_ul()
+            escp = _html.escape(line)
+            escp = _re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", escp)
+            escp = _re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"<em>\1</em>", escp)
+            html_lines.append(f"<p>{escp}</p>")
+        close_ul()
+        return "\n".join(html_lines)
+@app.get('/help', response_class=HTMLResponse)
+async def help_page(request: Request):
+    """Help/Guide page with sections and FAQ accordion."""
+    guide_md = None
+    try:
+        from pathlib import Path as _Path
+        md_path = _Path(BASE_DIR) / 'docs' / 'USER_GUIDE.md'
+        if md_path.exists():
+            guide_md = md_path.read_text(encoding='utf-8')
+    except Exception:
+        guide_md = None
+    faqs = FAQRepo.list_all()
+    # pass is_superadmin to template to show admin block
+    u = get_user_from_session(request)
+    is_super = False
+    if u:
+        try:
+            is_super = is_superadmin(int(u.get('id')))
+        except Exception:
+            is_super = False
+    guide_html = _markdown_to_html(guide_md or '')
+    return render('help.html', guide_html=guide_html, faqs=faqs, is_superadmin=is_super, request=request)
+
+@app.post('/admin/faq/add')
+async def admin_faq_add(request: Request, question: str = Form(...), answer: str = Form(...)):
+    urow = _require_user(request)
+    if not is_superadmin(urow[1]):
+        raise HTTPException(status_code=403, detail="Only superadmin")
+    FAQRepo.add(question, answer)
+    return RedirectResponse('/help?ok=faq_added', status_code=303)
+
+@app.post('/admin/faq/{faq_id}/delete')
+async def admin_faq_delete(request: Request, faq_id: int):
+    urow = _require_user(request)
+    if not is_superadmin(urow[1]):
+        raise HTTPException(status_code=403, detail="Only superadmin")
+    FAQRepo.delete(faq_id)
+    return RedirectResponse('/help?ok=faq_deleted', status_code=303)
 
 
 def _require_user(request: Request):

@@ -1,0 +1,108 @@
+<!doctype html>
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Справка</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <style>
+      .help-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
+      .faq-item { border:1px solid var(--border); border-radius:8px; margin-bottom:8px; }
+      .faq-q { padding:10px 12px; cursor:pointer; background: var(--card); }
+      .faq-a { padding:10px 12px; display:none; border-top:1px solid var(--border); background: var(--bg); }
+      .admin-box { border:1px dashed var(--border); border-radius:8px; padding:10px; margin:12px 0; }
+      .md { white-space: pre-wrap; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <a class="link" href="/{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}">← Назад</a>
+      <h2 style="margin: 8px 0 12px 0;">Справка</h2>
+
+      {% if guide_html %}
+        <div style="margin:8px 0;"><a class="link" href="#faq">Перейти к FAQ ↓</a></div>
+        <div class="card md">{{ guide_html | safe }}</div>
+      {% else %}
+        <div class="empty">Инструкция пока недоступна</div>
+      {% endif %}
+
+      <h3 id="faq" style="margin-top:16px;">🧠 Частые вопросы</h3>
+      {% if faqs %}
+        <div>
+          {% for id, q, a in faqs %}
+            <div class="faq-item">
+              <div class="faq-q" onclick="toggleFaq(this)">{{ q }}</div>
+              <div class="faq-a">{{ a }}</div>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="empty">Вопросов пока нет</div>
+      {% endif %}
+
+      {% if request and request.scope and request.scope.get('session') %}
+      {% endif %}
+
+      {% if request and request.scope %}
+      {% endif %}
+
+      {% if request %}
+      {% endif %}
+
+      {% if request %}
+      {% endif %}
+
+      {% if request %}
+      {% endif %}
+
+      {% if request %}
+      {% endif %}
+
+      {% set tg_id = request.query_params.get('tg_id') | safe_tg_id %}
+      {% if tg_id %}{% set back_q = '?tg_id=' ~ tg_id %}{% else %}{% set back_q = '' %}{% endif %}
+
+      {% if request %}
+      {% endif %}
+
+      {% set is_super = false %}
+      {% if request and request.session and request.session.get('user') %}
+        {% set suid = request.session.get('user').get('id') %}
+      {% endif %}
+
+      {% if request.query_params.get('is_superadmin') %}
+        {% set is_super = true %}
+      {% endif %}
+
+      {% if is_superadmin %}
+      <div class="admin-box">
+        <h4>Управление FAQ (только суперадмин)</h4>
+        <form method="post" action="/admin/faq/add{{ back_q }}" style="display:flex; flex-direction:column; gap:8px;">
+          <input type="text" name="question" placeholder="Вопрос" required style="padding:8px; border:1px solid var(--border); border-radius:6px; background: var(--bg); color: var(--text);">
+          <textarea name="answer" placeholder="Ответ" rows="3" required style="padding:8px; border:1px solid var(--border); border-radius:6px; background: var(--bg); color: var(--text);"></textarea>
+          <button class="btn" type="submit">Добавить</button>
+        </form>
+        {% if faqs %}
+        <div style="margin-top:8px;">
+          {% for id, q, a in faqs %}
+            <form method="post" action="/admin/faq/{{ id }}/delete{{ back_q }}" onsubmit="return confirm('Удалить вопрос?');" style="display:flex; align-items:center; justify-content:space-between; border:1px solid var(--border); padding:6px 8px; border-radius:6px; margin-top:6px;">
+              <div style="flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ q }}</div>
+              <button class="btn" type="submit" style="background:#ef4444;">Удалить</button>
+            </form>
+          {% endfor %}
+        </div>
+        {% endif %}
+      </div>
+      {% endif %}
+
+    </div>
+
+    <script>
+      function toggleFaq(el){
+        const a = el.nextElementSibling;
+        if (!a) return;
+        a.style.display = (a.style.display === 'block') ? 'none' : 'block';
+      }
+    </script>
+  </body>
+</html>
+
+
