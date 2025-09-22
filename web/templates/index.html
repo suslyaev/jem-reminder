@@ -92,9 +92,12 @@
       .autocomplete-option { padding: 10px 12px; cursor: pointer; border-bottom: 1px solid #374151; background: #1f2937 !important; color: #f9fafb !important; }
       .autocomplete-option:hover { background: #374151 !important; }
       .autocomplete-option:last-child { border-bottom: none; }
+      .help-fab { position: fixed; top: 12px; right: 12px; width: 36px; height: 36px; border-radius: 18px; background: var(--card); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; text-decoration: none; color: var(--text); box-shadow: 0 2px 8px rgba(0,0,0,0.25); opacity: 0.9; z-index: 100; }
+      .help-fab:hover { opacity: 1; background: var(--btn); color: #fff; border-color: transparent; }
     </style>
   </head>
   <body>
+    <a class="help-fab" href="/help{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" title="Справка" aria-label="Справка">❓</a>
     <div class="container">
       <div class="greet">
         <h2>Привет, {{ user_info.display }}!</h2>

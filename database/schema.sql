@@ -247,6 +247,14 @@ CREATE TABLE IF NOT EXISTS event_role_assignments (
 
 CREATE INDEX IF NOT EXISTS idx_event_role_assign_event ON event_role_assignments(event_id);
 
+-- FAQ entries for help page
+CREATE TABLE IF NOT EXISTS faq (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    question    TEXT NOT NULL,
+    answer      TEXT NOT NULL,
+    created_at  TEXT DEFAULT (datetime('now'))
+);
+
 -- Link generated events to templates to ensure idempotency
 CREATE TABLE IF NOT EXISTS template_generated_events (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
