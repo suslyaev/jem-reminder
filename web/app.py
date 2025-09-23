@@ -30,6 +30,8 @@ if TEST_TELEGRAM_ID:
     TEST_TELEGRAM_ID = int(TEST_TELEGRAM_ID)
 
 SUPERADMIN_ID = os.getenv('SUPERADMIN_ID')
+GROUP_NAME = os.getenv('GROUP_NAME', 'jem_reminder_bot')
+PROJECT_NAME = os.getenv('PROJECT_NAME', 'JEM Reminder')
 # Backward-compatible: if single value, cast to int; if comma-separated, leave None (use config.SUPERADMIN_IDS via is_superadmin)
 try:
     SUPERADMIN_ID = int(SUPERADMIN_ID) if (SUPERADMIN_ID and ',' not in SUPERADMIN_ID) else None
@@ -73,7 +75,7 @@ app.mount('/static', StaticFiles(directory=STATIC_DIR.as_posix()), name='static'
 # Add 404 handler
 @app.exception_handler(404)
 async def not_found_handler(request: Request, exc: HTTPException):
-    return render('404.html')
+    return render('404.html', project_name=PROJECT_NAME)
 
 def render(name: str, **ctx) -> HTMLResponse:
     tpl = env.get_template(name)
@@ -150,7 +152,7 @@ async def help_page(request: Request):
         except Exception:
             is_super = False
     guide_html = _markdown_to_html(guide_md or '')
-    return render('help.html', guide_html=guide_html, faqs=faqs, is_superadmin=is_super, request=request)
+    return render('help.html', guide_html=guide_html, faqs=faqs, is_superadmin=is_super, request=request, project_name=PROJECT_NAME)
 
 @app.post('/admin/faq/add')
 async def admin_faq_add(request: Request, question: str = Form(...), answer: str = Form(...)):
@@ -442,7 +444,7 @@ async def index(request: Request):
             try:
                 if len(user_row) >= 7 and user_row[6]:
                     clear_user_session(request)
-                    return render('welcome.html', message="Доступ запрещён", user_info=None, request=request)
+                    return render('welcome.html', message="Доступ запрещён", user_info=None, request=request, group_name=GROUP_NAME, project_name=PROJECT_NAME)
             except Exception:
                 pass
             user_id = user_row[0]
@@ -581,7 +583,7 @@ async def index(request: Request):
                 'username': username,
                 'telegram_id': telegram_id,
                 'phone': phone,
-            }, users=users, is_superadmin=is_super, audit_rows=audit_rows, audit_items=(audit_items if (request.query_params.get('tab') == 'audit') else []), audit_total=audit_total, audit_page=audit_page, audit_per_page=audit_per_page, audit_filters=audit_filters, audit_groups=(audit_groups if (request.query_params.get('tab') == 'audit') else []), audit_events=(audit_events if (request.query_params.get('tab') == 'audit') else []), request=request)
+            }, users=users, is_superadmin=is_super, audit_rows=audit_rows, audit_items=(audit_items if (request.query_params.get('tab') == 'audit') else []), audit_total=audit_total, audit_page=audit_page, audit_per_page=audit_per_page, audit_filters=audit_filters, audit_groups=(audit_groups if (request.query_params.get('tab') == 'audit') else []), audit_events=(audit_events if (request.query_params.get('tab') == 'audit') else []), request=request, project_name=PROJECT_NAME)
     
     # Если данные из Telegram не пришли, пробуем из переменных окружения
     if TEST_TELEGRAM_ID:
@@ -600,7 +602,7 @@ async def index(request: Request):
             try:
                 if len(user_row) >= 7 and user_row[6]:
                     clear_user_session(request)
-                    return render('welcome.html', message="Доступ запрещён", user_info=None, request=request)
+                    return render('welcome.html', message="Доступ запрещён", user_info=None, request=request, group_name=GROUP_NAME, project_name=PROJECT_NAME)
             except Exception:
                 pass
             user_id = user_row[0]
@@ -729,10 +731,10 @@ async def index(request: Request):
                 'username': username,
                 'telegram_id': telegram_id,
                 'phone': phone,
-            }, users=users, is_superadmin=is_super, audit_rows=audit_rows, audit_items=(audit_items if (request.query_params.get('tab') == 'audit') else []), audit_total=audit_total, audit_page=audit_page, audit_per_page=audit_per_page, audit_filters=audit_filters, audit_groups=(audit_groups if (request.query_params.get('tab') == 'audit') else []), audit_events=(audit_events if (request.query_params.get('tab') == 'audit') else []), request=request)
+            }, users=users, is_superadmin=is_super, audit_rows=audit_rows, audit_items=(audit_items if (request.query_params.get('tab') == 'audit') else []), audit_total=audit_total, audit_page=audit_page, audit_per_page=audit_per_page, audit_filters=audit_filters, audit_groups=(audit_groups if (request.query_params.get('tab') == 'audit') else []), audit_events=(audit_events if (request.query_params.get('tab') == 'audit') else []), request=request, project_name=PROJECT_NAME)
     
     # Если ничего не получилось, показываем стартовую страницу
-    return render('welcome.html', message="Требуется авторизация", user_info=None, request=request)
+    return render('welcome.html', message="Требуется авторизация", user_info=None, request=request, group_name=GROUP_NAME, project_name=PROJECT_NAME)
 
 
 @app.get('/group/{gid}', response_class=HTMLResponse)
@@ -945,7 +947,7 @@ async def group_view(request: Request, gid: int, tab: str = None, page: int = 1,
     event_count = GroupRepo.count_group_events(gid)
     # Role label: show localized role if present; otherwise show "Отсутствует"
     role_label = _role_label(role) if role else 'Отсутствует'
-    return render('group.html', group=group, role=role_label, is_admin=is_admin, active_events=active_events, archived_events=archived_events, active_pagination=active_pagination, archived_pagination=archived_pagination, booked_ids=booked_ids, responsible_ids=responsible_ids, display_name=display_name, bookings_map=bookings_map, member_options=member_options, member_name_map=member_name_map, event_count=event_count, active_tab=tab or 'active', current_page=page, per_page=per_page, request=request, current_user_id=user_id, audit_labels=audit_labels)
+    return render('group.html', group=group, role=role_label, is_admin=is_admin, active_events=active_events, archived_events=archived_events, active_pagination=active_pagination, archived_pagination=archived_pagination, booked_ids=booked_ids, responsible_ids=responsible_ids, display_name=display_name, bookings_map=bookings_map, member_options=member_options, member_name_map=member_name_map, event_count=event_count, active_tab=tab or 'active', current_page=page, per_page=per_page, request=request, current_user_id=user_id, audit_labels=audit_labels, project_name=PROJECT_NAME)
 
 
 # --- Event CRUD ---
@@ -1269,7 +1271,7 @@ async def group_settings(request: Request, gid: int):
     notifications_count = len(notifications)
     personal_notifications_count = len(personal_notifications)
     effective_role = 'superadmin' if is_super else role
-    return render('group_settings.html', group=group, role=effective_role, notifications=notifications, personal_notifications=personal_notifications, pending=pending, admins=admins, members=members, current_display_name=current_display_name, member_display_names=member_display_names, role_map=role_map, event_count=event_count, notifications_count=notifications_count, personal_notifications_count=personal_notifications_count, role_templates=role_templates, request=request)
+    return render('group_settings.html', group=group, role=effective_role, notifications=notifications, personal_notifications=personal_notifications, pending=pending, admins=admins, members=members, current_display_name=current_display_name, member_display_names=member_display_names, role_map=role_map, event_count=event_count, notifications_count=notifications_count, personal_notifications_count=personal_notifications_count, role_templates=role_templates, request=request, project_name=PROJECT_NAME)
 
 
 @app.post('/group/{gid}/settings/notifications/add')
@@ -1734,7 +1736,7 @@ async def event_settings(request: Request, gid: int, eid: int):
 
     # If global superadmin, force role label to superadmin for UI sections
     effective_role = 'superadmin' if is_super else role
-    return render('event_settings.html', group=group, event=event, members=member_options, event_notifications=event_notifications, personal_notifications=personal_notifications, event_notifications_sent=event_notifications_sent, personal_notifications_sent_map=personal_notifications_sent_map, role=effective_role, responsible_name=responsible_name, event_time_display=event_time_display, current_user_telegram_id=current_user_telegram_id, current_user_display_name=current_user_display_name, _calculate_notification_time=_calculate_notification_time, request=request, template_info=template_info, template_row=template_row, template_roles=template_roles, event_roles=event_roles, audit_info=audit_info)
+    return render('event_settings.html', group=group, event=event, members=member_options, event_notifications=event_notifications, personal_notifications=personal_notifications, event_notifications_sent=event_notifications_sent, personal_notifications_sent_map=personal_notifications_sent_map, role=effective_role, responsible_name=responsible_name, event_time_display=event_time_display, current_user_telegram_id=current_user_telegram_id, current_user_display_name=current_user_display_name, _calculate_notification_time=_calculate_notification_time, request=request, template_info=template_info, template_row=template_row, template_roles=template_roles, event_roles=event_roles, audit_info=audit_info, project_name=PROJECT_NAME)
 
 
 @app.post('/group/{gid}/events/{eid}/notifications/add')
@@ -1956,7 +1958,7 @@ async def group_audit(request: Request, gid: int):
             'new': newv,
         })
 
-    return render('group_audit.html', request=request, gid=gid, audit_items=audit_items, audit_total=audit_total, audit_page=page, audit_per_page=per_page, audit_events=audit_events, event_filter=(eflt or ''), group=GroupRepo.get_by_id(gid))
+    return render('group_audit.html', request=request, gid=gid, audit_items=audit_items, audit_total=audit_total, audit_page=page, audit_per_page=per_page, audit_events=audit_events, event_filter=(eflt or ''), group=GroupRepo.get_by_id(gid), project_name=PROJECT_NAME)
 
 @app.post('/group/{gid}/settings/admins/pending/{pid}/delete')
 async def delete_pending_invite(request: Request, gid: int, pid: int):
@@ -2178,7 +2180,7 @@ async def group_analytics(request: Request, gid: int, start: str | None = None, 
         'total_free_roles': sum(free_roles_counter.values()),
     }
 
-    return render('group_analytics.html', group=group, members=members, daily=daily, user_bookings=user_bookings, free_roles=free_roles, stats=stats, request=request, gid=gid, start=start or '', end=end or '', user=user or 0)
+    return render('group_analytics.html', group=group, members=members, daily=daily, user_bookings=user_bookings, free_roles=free_roles, stats=stats, request=request, gid=gid, start=start or '', end=end or '', user=user or 0, project_name=PROJECT_NAME)
 
 @app.post('/group/{gid}/events/{eid}/roles/update')
 async def update_event_roles(request: Request, gid: int, eid: int, allow_multi_roles_per_user: int = Form(0), role_names: List[str] = Form(None)):
@@ -2559,7 +2561,7 @@ async def event_detail(request: Request, gid: int, eid: int):
     event = EventRepo.get_by_id(eid)
     bookings = BookingRepo.list_event_bookings_with_names(gid, eid)
     event_time_display, _ = _format_time_display(event[2])
-    return render('event_detail.html', group=group, event=event, event_time_display=event_time_display, bookings=bookings, role=_role_label(role or 'participant'), request=request)
+    return render('event_detail.html', group=group, event=event, event_time_display=event_time_display, bookings=bookings, role=_role_label(role or 'participant'), request=request, project_name=PROJECT_NAME)
 
 
 @app.post('/group/{gid}/events/{eid}/unbook')
