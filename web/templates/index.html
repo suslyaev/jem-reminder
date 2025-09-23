@@ -22,7 +22,7 @@
         margin-bottom: 12px; 
       }
       .group-title { font-weight: 700; font-size: 16px; }
-      .gear { position:absolute; top: 10px; right: 10px; text-decoration:none; }
+      .gear { position:absolute; bottom: 10px; right: 10px; text-decoration:none; }
       .meta-line { color: var(--muted); font-size: 14px; margin-top: 4px; }
       .greet { margin-bottom: 12px; }
       .greet .meta-line { margin-top: 2px; }
@@ -94,6 +94,20 @@
       .autocomplete-option:last-child { border-bottom: none; }
       .help-fab { position: fixed; top: 10px; right: 10px; width: 30px; height: 30px; border-radius: 15px; background: var(--card); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; text-decoration: none; color: var(--text); box-shadow: 0 2px 6px rgba(0,0,0,0.2); opacity: 0.85; z-index: 100; }
       .help-fab:hover { opacity: 1; background: var(--card); color: var(--text); border-color: var(--border); }
+      .group-gear { text-decoration: none; display: inline-flex; align-items: center; line-height: 1; }
+      .group-gear:focus { outline: none; }
+      .group-gear:hover { text-decoration: none; }
+      /* Background color palette classes to avoid inline style Jinja expressions */
+      .bg-0 { background-color: #ef4444; }
+      .bg-1 { background-color: #3b82f6; }
+      .bg-2 { background-color: #10b981; }
+      .bg-3 { background-color: #f59e0b; }
+      .bg-4 { background-color: #8b5cf6; }
+      .bg-5 { background-color: #ec4899; }
+      .bg-6 { background-color: #06b6d4; }
+      .bg-7 { background-color: #84cc16; }
+      .btn-danger { background: #ef4444 !important; color: #fff; }
+      .btn-muted { background: #6b7280 !important; color: #fff; }
     </style>
   </head>
   <body>
@@ -126,7 +140,7 @@
             {% for gid, title, role, cnt, role_label, chat_id in groups %}
               <div class="group-card" data-title="{{ title.lower() }}" data-role="{{ role_label.lower() }}" data-chat="{{ chat_id }}">
                 <a href="/group/{{ gid }}{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="text-decoration: none;">
-                  <div class="group-icon" style="background-color: {{ ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16'][gid % 8] }};">
+                  <div class="group-icon bg-{{ gid % 8 }}">
                     {{ title[0].upper() if title else '?' }}
                   </div>
                 </a>
@@ -184,7 +198,7 @@
           {% set display = (first_name or '') + (' ' if first_name and last_name else '') + (last_name or '') %}
           {% if not display %}{% set display = uname and ('@' + uname) or ('ID:' ~ uid) %}{% endif %}
           <div class="group-card user-card" data-name="{{ (display or '') | lower }}" data-uname="{{ (uname or '') | lower }}" data-tgid="{{ tid }}">
-            <div class="group-icon" style="background-color: {{ ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16'][uid % 8] }};">
+            <div class="group-icon bg-{{ uid % 8 }}">
               {{ (display[0] if display else (uname and uname[0] or '?')) | upper }}
             </div>
             <div class="group-content">
@@ -216,7 +230,7 @@
               <div style="margin-top:6px; display:flex; gap:8px; flex-wrap:wrap;">
                 <form method="post" action="/admin/users/{{ uid }}/block{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}&tab=users{% else %}?tab=users{% endif %}">
                   <input type="hidden" name="blocked" value="{{ 0 if not blocked else 1 }}">
-                  <button class="btn" type="submit" style="background: {{ '#ef4444' if not blocked else '#6b7280' }};">{{ 'Заблокировать' if not blocked else 'Разблокировать' }}</button>
+                  <button class="btn {{ 'btn-danger' if not blocked else 'btn-muted' }}" type="submit">{{ 'Заблокировать' if not blocked else 'Разблокировать' }}</button>
                 </form>
                 <form method="post" action="/admin/users/{{ uid }}/delete{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}&tab=users{% else %}?tab=users{% endif %}" onsubmit="return confirm('Удалить пользователя и удалить его из всех групп?');">
                   <button class="btn" type="submit" style="background:#ef4444;">Удалить</button>
@@ -416,7 +430,7 @@
               {% for gid, title, role, cnt, role_label, chat_id in groups %}
                 <div class="group-card" data-title="{{ title.lower() }}" data-role="{{ role_label.lower() }}" data-chat="{{ chat_id }}">
                   <a href="/group/{{ gid }}{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" style="text-decoration: none;">
-                    <div class="group-icon" style="background-color: {{ ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16'][gid % 8] }};">
+                    <div class="group-icon bg-{{ gid % 8 }}">
                       {{ title[0].upper() if title else '?' }}
                     </div>
                   </a>
