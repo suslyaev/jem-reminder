@@ -7,10 +7,22 @@
     <style>
       .help-fab { position: fixed; top: 10px; right: 10px; width: 30px; height: 30px; border-radius: 15px; background: var(--card); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; text-decoration: none; color: var(--text); box-shadow: 0 2px 6px rgba(0,0,0,0.2); opacity: 0.85; z-index: 100; }
       .help-fab:hover { opacity: 1; background: var(--card); color: var(--text); border-color: var(--border); }
+      /* Preloader overlay */
+      #preloader { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 9999; }
+      .loader { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+      .spinner { width: 42px; height: 42px; border: 4px solid var(--border); border-top-color: var(--btn); border-radius: 50%; animation: spin 0.9s linear infinite; }
+      .loader-text { color: var(--muted); font-size: 14px; }
+      @keyframes spin { to { transform: rotate(360deg); } }
     </style>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
   </head>
   <body>
+    <div id="preloader" aria-label="Загрузка">
+      <div class="loader">
+        <div class="spinner"></div>
+        <div class="loader-text">Загружаем данные…</div>
+      </div>
+    </div>
     <a class="help-fab" href="/help{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" title="Справка" aria-label="Справка">❓</a>
     <div class="container">
       <h1>{{ project_name }}</h1>
@@ -68,12 +80,23 @@
               if (!params.get('tgWebAppData')) {
                 params.set('tgWebAppData', Telegram.WebApp.initData);
                 var url = window.location.pathname + '?' + params.toString();
+                // keep preloader visible during redirect
                 window.location.replace(url);
+                return;
               }
+              // If we are still on welcome after enriching URL, hide preloader to show content
+              var pl = document.getElementById('preloader');
+              if (pl) pl.style.display = 'none';
+            } else {
+              // No user data in WebApp → hide preloader to show instructions
+              var pl2 = document.getElementById('preloader');
+              if (pl2) pl2.style.display = 'none';
             }
           }
         } catch (e) {
           console.log('TG WebApp init error:', e);
+          var pl3 = document.getElementById('preloader');
+          if (pl3) pl3.style.display = 'none';
         }
       })();
     </script>
