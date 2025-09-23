@@ -118,6 +118,8 @@ def _markdown_to_html(md_text: str) -> str:
                 esc = _html.escape(item)
                 esc = _re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", esc)
                 esc = _re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"<em>\1</em>", esc)
+                # Handle markdown links [text](url)
+                esc = _re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2" target="_blank" rel="noopener">\1</a>', esc)
                 html_lines.append(f"<li>{esc}</li>")
                 continue
             if line.strip() == '---':
@@ -128,6 +130,8 @@ def _markdown_to_html(md_text: str) -> str:
             escp = _html.escape(line)
             escp = _re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", escp)
             escp = _re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"<em>\1</em>", escp)
+            # Handle markdown links [text](url)
+            escp = _re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2" target="_blank" rel="noopener">\1</a>', escp)
             html_lines.append(f"<p>{escp}</p>")
         close_ul()
         return "\n".join(html_lines)
@@ -152,7 +156,9 @@ async def help_page(request: Request):
         except Exception:
             is_super = False
     guide_html = _markdown_to_html(guide_md or '')
-    return render('help.html', guide_html=guide_html, faqs=faqs, is_superadmin=is_super, request=request, project_name=PROJECT_NAME)
+    # Replace bot name placeholder with dynamic value
+    guide_html = guide_html.replace('{{BOT_NAME}}', GROUP_NAME)
+    return render('help.html', guide_html=guide_html, faqs=faqs, is_superadmin=is_super, request=request, project_name=PROJECT_NAME, group_name=GROUP_NAME)
 
 @app.post('/admin/faq/add')
 async def admin_faq_add(request: Request, question: str = Form(...), answer: str = Form(...)):

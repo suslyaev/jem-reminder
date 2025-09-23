@@ -27,6 +27,9 @@ def load_config():
 try:
     CONFIG = load_config()
     BOT_TOKEN = CONFIG['BOT_TOKEN']
+    # Необязательное имя бота для генерации ссылок добавления в группы
+    # Если в .env нет BOT_NAME, пробуем из переменной окружения GROUP_NAME (для обратной совместимости с web/app.py)
+    BOT_NAME: Optional[str] = CONFIG.get('BOT_NAME') or os.getenv('GROUP_NAME')
     
     # Поддержка как одного ID, так и массива ID суперадминов
     superadmin_str = CONFIG['SUPERADMIN_ID']

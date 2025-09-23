@@ -10,7 +10,7 @@ import dateparser
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 
 from services.repositories import UserRepo, GroupRepo, RoleRepo, NotificationRepo, EventRepo, EventNotificationRepo, PersonalEventNotificationRepo, DispatchLogRepo
-from config import BOT_TOKEN, SUPERADMIN_ID
+from config import BOT_TOKEN, SUPERADMIN_ID, BOT_NAME
 
 
 def is_superadmin(telegram_id: int) -> bool:
@@ -692,6 +692,12 @@ async def start(message: types.Message):
     else:
         groups = GroupRepo.list_user_groups_with_roles(user_id)
     from aiogram.utils.keyboard import InlineKeyboardBuilder
+    # Resolve bot username for startgroup link
+    try:
+        me = await bot.get_me()
+        _bot_username = BOT_NAME or (me.username if me else None)
+    except Exception:
+        _bot_username = BOT_NAME
     kb = InlineKeyboardBuilder()
     lines = []
     if is_superadmin(user.id):
@@ -707,6 +713,9 @@ async def start(message: types.Message):
                 role_label = ROLE_RU.get(role or 'member', role or 'member')
             kb.button(text=f"{title} (роль: {role_label})", callback_data=f"grp_menu:{gid}")
         kb.adjust(1)
+    # Добавляем кнопку приглашения бота в группу сразу после списка/сообщения
+    if _bot_username:
+        kb.row(types.InlineKeyboardButton(text="+ Добавить бота в группу", url=f"https://t.me/{_bot_username}?startgroup=true"))
     await set_menu_message(user_id, message.chat.id, "\n".join(lines), kb.as_markup())
 
     # Check if user matches any pending invites and confirm in those groups
@@ -724,6 +733,8 @@ async def start(message: types.Message):
                 role_ru2 = ROLE_RU.get(role2, role2)
                 kb2.button(text=f"{title2} (роль: {role_ru2})", callback_data=f"grp_menu:{gid2}")
             kb2.adjust(1)
+            if _bot_username:
+                kb2.row(types.InlineKeyboardButton(text="+ Добавить бота в группу", url=f"https://t.me/{_bot_username}?startgroup=true"))
             await set_menu_message(user_id, message.chat.id, "\n".join(lines2), kb2.as_markup())
         else:
             # If nothing confirmed via id/username, suggest sharing phone number only if there are pending by phone
