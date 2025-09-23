@@ -171,9 +171,9 @@
                   </div>
                   {% endif %}
                   {% if is_superadmin or (role and role not in ['member','participant']) %}
+                    <a class="group-gear" href="#" data-action="group-message" data-gid="{{ gid }}" data-title="{{ title }}" aria-label="Сообщение" title="Сообщение" style="text-decoration:none;">✉️</a>
                     <a class="group-gear" href="/group/{{ gid }}/audit{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Аудит" title="Аудит" style="text-decoration:none;">🧾</a>
                     <a class="group-gear" href="/group/{{ gid }}/analytics{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Аналитика" title="Аналитика" style="text-decoration:none;">📊</a>
-                    <a class="group-gear" href="#" data-action="group-message" data-gid="{{ gid }}" data-title="{{ title }}" aria-label="Сообщение" title="Сообщение" style="text-decoration:none;">✉️</a>
                     <a class="group-gear" href="/group/{{ gid }}/settings{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Настройки">⚙️</a>
                   {% else %}
                     <a class="group-gear" href="/group/{{ gid }}/settings{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Настройки">⚙️</a>
@@ -442,9 +442,9 @@
                   </div>
                   <div class="gear" style="display:flex; gap:8px; align-items:center;">
                     {% if is_superadmin or (role and role not in ['member','participant']) %}
+                      <a class="group-gear" href="#" data-action="group-message" data-gid="{{ gid }}" data-title="{{ title }}" aria-label="Сообщение" title="Сообщение" style="text-decoration:none;">✉️</a>
                       <a class="group-gear" href="/group/{{ gid }}/audit{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Аудит" title="Аудит" style="text-decoration:none;">🧾</a>
                       <a class="group-gear" href="/group/{{ gid }}/analytics{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Аналитика" title="Аналитика" style="text-decoration:none;">📊</a>
-                    <a class="group-gear" href="#" data-action="group-message" data-gid="{{ gid }}" data-title="{{ title }}" aria-label="Сообщение" title="Сообщение" style="text-decoration:none;">✉️</a>
                       <a class="group-gear" href="/group/{{ gid }}/settings{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Настройки">⚙️</a>
                     {% else %}
                       <a class="group-gear" href="/group/{{ gid }}/settings{% if request.query_params.get('tg_id') | safe_tg_id %}?tg_id={{ request.query_params.get('tg_id') | safe_tg_id }}{% endif %}" aria-label="Настройки">⚙️</a>
