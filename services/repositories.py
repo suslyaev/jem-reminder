@@ -912,9 +912,22 @@ class PersonalEventNotificationRepo:
             from datetime import datetime
             import pytz
             
-            # Parse event time and check if it's in the future
+            # Parse event time and check if it's in the future (support with and without seconds)
             try:
-                event_dt = datetime.strptime(event_time[0], '%Y-%m-%d %H:%M:%S')
+                event_dt = None
+                for fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M'):
+                    try:
+                        event_dt = datetime.strptime(event_time[0], fmt)
+                        break
+                    except Exception:
+                        pass
+                if event_dt is None:
+                    try:
+                        event_dt = datetime.fromisoformat(event_time[0])
+                    except Exception:
+                        # If parsing fails, skip creating notifications
+                        return
+                
                 msk = pytz.timezone('Europe/Moscow')
                 event_dt = msk.localize(event_dt)
                 now = datetime.now(msk)
