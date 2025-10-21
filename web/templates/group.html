@@ -12,11 +12,17 @@
       .event-date { color: var(--muted); font-size: 14px; }
       .gear { position:absolute; top: 10px; right: 10px; text-decoration:none; }
       .gear-inline { position: static; text-decoration: none; }
-      .row { display: flex; gap: 8px; align-items: center; width: 100%; }
+      .row { display: flex; gap: 6px; align-items: center; width: 100%; }
       .row .name-input { flex: 1 1 auto; min-width: 0; width: 100%; }
       .row .time-input { flex: 1 1 auto; min-width: 180px; max-width: 220px; width: 100%; }
-      .actions { display:flex; gap:8px; margin-top: 8px; align-items: center; flex-wrap: wrap; }
+      .actions { display:flex; gap:6px; margin-top: 8px; align-items: center; flex-wrap: wrap; }
       .responsible { color: var(--muted); font-size: 13px; margin-top: 6px; }
+      
+      /* Mobile-optimized role styles */
+      .role-label { min-width: 80px; color: var(--muted); font-size: 13px; }
+      .role-btn { padding: 6px 8px; font-size: 12px; border-radius: 6px; white-space: nowrap; min-width: 80px; text-align: center; }
+      .role-btn.book { background: var(--btn); color: white; border: 0; cursor: pointer; }
+      .role-btn.unbook { background: var(--danger); color: white; border: 0; cursor: pointer; }
       .select { min-width: 180px; }
       .toast { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 1000; padding: 12px 20px; border-radius: 8px; font-weight: 500; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3); background: #16a34a; color: #fff; display: none; }
       .meta-line { color: var(--muted); font-size: 14px; margin-top: 4px; }
@@ -24,10 +30,10 @@
       .group-gear { text-decoration: none; }
       .row-actions { display:flex; align-items:center; gap:8px; margin-top:6px; }
       .btn-small { padding: 8px 10px; border-radius: 8px; background: var(--danger); color:#fff; border:0; cursor:pointer; }
-      .autocomplete-container { flex: 1 1 auto; min-width: 180px; position: relative; }
-      .autocomplete-input { width: 100%; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text); font-size: 14px; }
+      .autocomplete-container { flex: 1 1 auto; min-width: 120px; max-width: 160px; position: relative; }
+      .autocomplete-input { width: 100%; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font-size: 13px; }
       .autocomplete-dropdown { position: absolute !important; top: 100% !important; left: 0 !important; right: 0 !important; background: #1f2937 !important; border: 1px solid #374151 !important; border-radius: 8px !important; max-height: 200px !important; overflow-y: auto !important; z-index: 1000 !important; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5) !important; margin-top: 4px !important; opacity: 1 !important; }
-      .autocomplete-option { padding: 10px 12px; cursor: pointer; border-bottom: 1px solid #374151; background: #1f2937 !important; color: #f9fafb !important; }
+      .autocomplete-option { padding: 8px 10px; cursor: pointer; border-bottom: 1px solid #374151; background: #1f2937 !important; color: #f9fafb !important; font-size: 13px; }
       .autocomplete-option:hover { background: #374151 !important; }
       .autocomplete-option:last-child { border-bottom: none; }
       
@@ -212,6 +218,45 @@
         .modal-body .item .autocomplete-container {
           max-width: 80px !important;
         }
+        
+        /* Mobile optimizations for event cards */
+        .event-card {
+          padding: 10px 36px 10px 10px;
+        }
+        
+        .role-label {
+          min-width: 60px;
+          font-size: 12px;
+        }
+        
+        .autocomplete-container {
+          min-width: 100px;
+          max-width: 140px;
+        }
+        
+        .autocomplete-input {
+          font-size: 12px;
+          padding: 5px 6px;
+        }
+        
+        .autocomplete-option {
+          padding: 6px 8px;
+          font-size: 12px;
+        }
+        
+        .role-btn {
+          padding: 5px 6px;
+          font-size: 11px;
+          min-width: 70px;
+        }
+        
+        .time-input {
+          max-width: 160px;
+        }
+        
+        .row {
+          gap: 4px;
+        }
       }
     </style>
   </head>
@@ -317,37 +362,39 @@
                   <!-- Вторая строка: дата и время -->
                   <div class="row" style="margin-bottom: 12px; width: 100%; align-items: center;">
                     <input class="time-input" type="datetime-local" name="time" value="{{ e.time_input }}" style="flex: 1; margin-right: 8px; max-width: 180px;" />
-                    <span style="color: var(--muted); font-size: 14px; white-space: nowrap;">{{ e.time_display }}</span>
+                    <span style="color: var(--muted); font-size: 10px; white-space: nowrap;">{{ e.time_display }}</span>
                   </div>
 
                   {% if e.role_requirements and e.role_requirements|length > 0 %}
                   <div class="row" style="flex-direction: column; align-items: stretch; gap: 6px;">
                     {% for rname, req in e.role_requirements %}
-                      <div class="row" style="gap: 8px; align-items: center;">
-                        <div style="min-width: 120px; color: var(--muted);">{{ rname }}</div>
-                        {% set assigned_uid = e.role_assignments.get(rname) %}
-                        {% if assigned_uid %}
-                          <div class="autocomplete-container" style="flex: 1;">
-                            <input class="autocomplete-input" type="text" value="{{ e.role_assignment_labels.get(rname, member_name_map.get(assigned_uid, 'ID: ' ~ assigned_uid)) }}" disabled>
-                          </div>
-                          {% if is_admin or assigned_uid == current_user_id %}
-                            <button class="btn" type="button" data-action="unbook-role" data-event-id="{{ e.id }}" data-role-name="{{ rname }}" style="background: var(--danger);">Отменить бронь</button>
-                          {% endif %}
-                        {% else %}
-                          {% if member_options and member_options|length > 0 %}
-                            <div class="autocomplete-container" style="flex: 1; max-width: 220px;">
-                              <input class="autocomplete-input" type="text" placeholder="— выбрать —" value="" data-user-id="" autocomplete="off">
-                              <input type="hidden" name="role_{{ rname }}_user_id" value="">
-                              <div class="autocomplete-dropdown" style="display: none;">
-                                <div class="autocomplete-option" data-value="">— выбрать —</div>
-                                {% for uid, label in member_options %}
-                                  <div class="autocomplete-option" data-value="{{ uid }}">{{ label }}</div>
-                                {% endfor %}
-                              </div>
+                      <div class="row" style="gap: 6px; align-items: center; justify-content: space-between;">
+                        <div class="role-label">{{ rname }}</div>
+                        <div style="display: flex; gap: 6px; align-items: center; flex: 1;">
+                          {% set assigned_uid = e.role_assignments.get(rname) %}
+                          {% if assigned_uid %}
+                            <div class="autocomplete-container" style="flex: 1;">
+                              <input class="autocomplete-input" type="text" value="{{ e.role_assignment_labels.get(rname, member_name_map.get(assigned_uid, 'ID: ' ~ assigned_uid)) }}" disabled>
                             </div>
-                            <button class="btn" type="button" data-action="book-role" data-event-id="{{ e.id }}" data-role-name="{{ rname }}" {% if not e.allow_multi_roles_per_user and e.current_user_has_role %}disabled title="У вас уже есть роль в этом мероприятии"{% endif %}>Забронировать</button>
+                            {% if is_admin or assigned_uid == current_user_id %}
+                              <button class="role-btn unbook" type="button" data-action="unbook-role" data-event-id="{{ e.id }}" data-role-name="{{ rname }}" style="margin-left: 15px;">Отменить</button>
+                            {% endif %}
+                          {% else %}
+                            {% if member_options and member_options|length > 0 %}
+                              <div class="autocomplete-container" style="flex: 1;">
+                                <input class="autocomplete-input" type="text" placeholder="— выбрать —" value="" data-user-id="" autocomplete="off">
+                                <input type="hidden" name="role_{{ rname }}_user_id" value="">
+                                <div class="autocomplete-dropdown" style="display: none;">
+                                  <div class="autocomplete-option" data-value="">— выбрать —</div>
+                                  {% for uid, label in member_options %}
+                                    <div class="autocomplete-option" data-value="{{ uid }}">{{ label }}</div>
+                                  {% endfor %}
+                                </div>
+                              </div>
+                              <button class="role-btn book" type="button" data-action="book-role" data-event-id="{{ e.id }}" data-role-name="{{ rname }}" {% if not e.allow_multi_roles_per_user and e.current_user_has_role %}disabled title="У вас уже есть роль в этом мероприятии"{% endif %} style="margin-left: 15px;">Забронировать</button>
+                            {% endif %}
                           {% endif %}
-                        {% endif %}
+                        </div>
                       </div>
                     {% endfor %}
                   </div>
@@ -382,26 +429,28 @@
                 <!-- Вторая строка: дата и время (read-only) -->
                 <div class="row" style="margin-bottom: 12px; width: 100%; align-items: center;">
                   <input class="time-input" type="datetime-local" name="time_ro" value="{{ e.time_input }}" style="flex: 1; margin-right: 8px; max-width: 180px;" disabled />
-                  <span style="color: var(--muted); font-size: 14px; white-space: nowrap;">{{ e.time_display }}</span>
+                  <span style="color: var(--muted); font-size: 10px; white-space: nowrap;">{{ e.time_display }}</span>
                 </div>
                 <!-- Роли: можно забронировать свободные и отменить свою бронь -->
                 {% if e.role_requirements and e.role_requirements|length > 0 %}
                 <div class="row" style="flex-direction: column; align-items: stretch; gap: 6px;">
                   {% for rname, req in e.role_requirements %}
-                    <div class="row" style="gap: 8px; align-items: center;">
-                      <div style="min-width: 120px; color: var(--muted);">{{ rname }}</div>
-                      {% set assigned_uid = e.role_assignments.get(rname) %}
-                      {% if assigned_uid %}
-                        <div class="autocomplete-container" style="flex: 1;">
-                          <input class="autocomplete-input" type="text" value="{{ e.role_assignment_labels.get(rname, member_name_map.get(assigned_uid, 'ID: ' ~ assigned_uid)) }}" disabled>
-                        </div>
-                        {% if assigned_uid == current_user_id %}
-                          <button class="btn" type="button" data-action="unbook-role" data-event-id="{{ e.id }}" data-role-name="{{ rname }}" style="background: var(--danger);">Отменить бронь</button>
+                    <div class="row" style="gap: 6px; align-items: center; justify-content: space-between;">
+                      <div class="role-label">{{ rname }}</div>
+                      <div style="display: flex; gap: 6px; align-items: center; flex: 1;">
+                        {% set assigned_uid = e.role_assignments.get(rname) %}
+                        {% if assigned_uid %}
+                          <div class="autocomplete-container" style="flex: 1;">
+                            <input class="autocomplete-input" type="text" value="{{ e.role_assignment_labels.get(rname, member_name_map.get(assigned_uid, 'ID: ' ~ assigned_uid)) }}" disabled>
+                          </div>
+                          {% if assigned_uid == current_user_id %}
+                            <button class="role-btn unbook" type="button" data-action="unbook-role" data-event-id="{{ e.id }}" data-role-name="{{ rname }}" style="margin-left: 15px;">Отменить</button>
+                          {% endif %}
+                        {% else %}
+                          <div style="flex: 1; color: var(--muted); font-size: 13px;">Свободно</div>
+                          <button class="role-btn book" type="button" data-action="book-role" data-event-id="{{ e.id }}" data-role-name="{{ rname }}" {% if not e.allow_multi_roles_per_user and e.current_user_has_role %}disabled title="У вас уже есть роль в этом мероприятии"{% endif %} style="margin-left: 15px;">Забронировать</button>
                         {% endif %}
-                      {% else %}
-                        <div style="flex: 1; color: var(--muted);">Свободно</div>
-                        <button class="btn" type="button" data-action="book-role" data-event-id="{{ e.id }}" data-role-name="{{ rname }}" {% if not e.allow_multi_roles_per_user and e.current_user_has_role %}disabled title="У вас уже есть роль в этом мероприятии"{% endif %}>Забронировать</button>
-                      {% endif %}
+                      </div>
                     </div>
                   {% endfor %}
                 </div>
@@ -482,21 +531,23 @@
                   <!-- Вторая строка: дата и время -->
                   <div class="row" style="margin-bottom: 12px; width: 100%; align-items: center;">
                     <input class="time-input" type="datetime-local" name="time" value="{{ e.time_input }}" style="flex: 1; margin-right: 8px; max-width: 180px;" />
-                    <span style="color: var(--muted); font-size: 14px; white-space: nowrap;">{{ e.time_display }}</span>
+                    <span style="color: var(--muted); font-size: 10px; white-space: nowrap;">{{ e.time_display }}</span>
                   </div>
 
                   {% if e.role_requirements and e.role_requirements|length > 0 %}
                   <div class="row" style="flex-direction: column; align-items: stretch; gap: 6px;">
                     {% for rname, req in e.role_requirements %}
-                      <div class="row" style="gap: 8px; align-items: center;">
-                        <div style="min-width: 120px; color: var(--muted);">{{ rname }}</div>
-                        {% set assigned_uid = e.role_assignments.get(rname) %}
-                        <div class="autocomplete-container" style="flex: 1;">
-                          {% if assigned_uid %}
-                            <input class="autocomplete-input" type="text" value="{{ e.role_assignment_labels.get(rname, member_name_map.get(assigned_uid, 'ID: ' ~ assigned_uid)) }}" disabled>
-                          {% else %}
-                            <input class="autocomplete-input" type="text" value="Свободно" disabled>
-                          {% endif %}
+                      <div class="row" style="gap: 6px; align-items: center; justify-content: space-between;">
+                        <div class="role-label">{{ rname }}</div>
+                        <div style="display: flex; gap: 6px; align-items: center; flex: 1;">
+                          {% set assigned_uid = e.role_assignments.get(rname) %}
+                          <div class="autocomplete-container" style="flex: 1;">
+                            {% if assigned_uid %}
+                              <input class="autocomplete-input" type="text" value="{{ e.role_assignment_labels.get(rname, member_name_map.get(assigned_uid, 'ID: ' ~ assigned_uid)) }}" disabled>
+                            {% else %}
+                              <input class="autocomplete-input" type="text" value="Свободно" disabled>
+                            {% endif %}
+                          </div>
                         </div>
                       </div>
                     {% endfor %}
@@ -522,7 +573,7 @@
                 </div>
                 <div class="row" style="margin-bottom: 12px; width: 100%; align-items: center;">
                   <input class="time-input" type="datetime-local" value="{{ e.time_input }}" style="flex: 1; margin-right: 8px; max-width: 180px;" disabled />
-                  <span style="color: var(--muted); font-size: 14px; white-space: nowrap;">{{ e.time_display }}</span>
+                  <span style="color: var(--muted); font-size: 10px; white-space: nowrap;">{{ e.time_display }}</span>
                 </div>
                 {% if e.role_requirements and e.role_requirements|length > 0 %}
                 <div class="row" style="flex-direction: column; align-items: stretch; gap: 6px;">

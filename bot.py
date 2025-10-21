@@ -465,8 +465,19 @@ def calculate_notification_time(event_time_str: str, time_before: int, time_unit
     from datetime import datetime, timedelta
     
     try:
-        # Parse event time
-        event_dt = datetime.strptime(event_time_str, '%Y-%m-%d %H:%M:%S')
+        # Parse event time (support with and without seconds)
+        event_dt = None
+        for fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M'):
+            try:
+                event_dt = datetime.strptime(event_time_str, fmt)
+                break
+            except Exception:
+                pass
+        if event_dt is None:
+            try:
+                event_dt = datetime.fromisoformat(event_time_str)
+            except Exception:
+                return "Ошибка парсинга времени"
         
         # Calculate notification time (BEFORE the event)
         if time_unit == 'minutes':
